@@ -1,0 +1,114 @@
+# -----------------------
+# Miscellaneous
+# -----------------------
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# -----------------------
+# IntelliJ / Android Studio
+# -----------------------
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# -----------------------
+# Visual Studio Code
+# -----------------------
+.vscode/
+*.code-workspace
+
+# -----------------------
+# Flutter / Dart / Pub
+# -----------------------
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# -----------------------
+# Android (General)
+# -----------------------
+# Gradle Cache & Settings
+.gradle/
+**/android/.gradle/
+**/android/local.properties
+**/android/gradlew
+**/android/gradlew.bat
+
+# Build Output
+/android/app/debug
+/android/app/profile
+/android/app/release
+**/android/app/build/
+**/android/captures/
+
+# Keys (Security)
+*.jks
+*.keystore
+key.properties
+
+# Symbolication & Obfuscation
+app.*.symbols
+app.*.map.json
+
+# -----------------------
+# Unity Project (開発環境用)
+# -----------------------
+# Unityが生成する一時フォルダ（絶対に管理しない）
+**/[Ll]ibrary/
+**/[Tt]emp/
+**/[Oo]bj/
+**/[Bb]uild/
+**/[Bb]uilds/
+**/[Ll]ogs/
+**/[Uu]ser[Ss]ettings/
+**/[Mm]emoryCaptures/
+
+# Visual Studio generated
+.vs/
+*.csproj
+*.sln
+
+# -----------------------
+# Unity Export to Android (重要！)
+# -----------------------
+# ビルド生成物（巨大ファイル）
+**/build/
+**/unityLibrary/build/
+
+# C++変換コード・中間生成物（ここが一番容量を食います）
+**/unityLibrary/src/main/Il2CppOutputProject/
+**/unityLibrary/.cxx/
+
+# デバッグシンボル・ライブラリ
+**/unityLibrary/symbols/
+**/unityLibrary/libs/
+**/unityLibrary/*.apk
+**/unityLibrary/*.aar
+
+# 追記: Androidのネイティブライブラリ（ここが巨大ファイルの正体）
+**/unityLibrary/src/main/jniLibs/
+**/unityLibrary/src/main/il2cppOutput/
+**/jniLibs/
+
+# -----------------------
+# Unity Export (Entire Folder)
+# -----------------------
+# Unityから書き出されたAndroidプロジェクトは巨大すぎるため丸ごと無視する
+**/android/unityLibrary/
