@@ -1,30 +1,31 @@
 using UnityEngine;
-using DG.Tweening;
+using DG.Tweening; 
 
 public class PlayerController : MonoBehaviour
 {
     public string PlayerId;
+    public string Role;
 
-    // 追加: 役割ごとの初期設定
+    // ★エラー修正: GameManagerが呼び出せるようにSetupを復活させました
     public void Setup(string id, string role)
     {
         this.PlayerId = id;
-        
-        // 色を変える（Resourcesからマテリアルを読み込む簡易実装）
-        // ※Assets/Resources/Mat_Oni, Mat_Runner がある前提
-        string matName = (role == "Oni") ? "Mat_Oni" : "Mat_Runner";
-        Material mat = Resources.Load<Material>(matName);
-        
-        if (mat != null)
-        {
-            GetComponent<Renderer>().material = mat;
-        }
+        this.Role = role;
     }
-    
+
+    // 引数の型が違う場合用（念のため）
+    public void Setup(string id, int index)
+    {
+        this.PlayerId = id;
+    }
+
     // 指定した座標へジャンプ移動する
     public void MoveToSquare(Vector3 targetPos)
     {
-        Vector3 goal = targetPos + Vector3.up * 1.0f; // 高さ調整
+        // ブロックの上に乗るようY軸調整
+        Vector3 goal = targetPos + Vector3.up * 1.0f;
+
+        // ジャンプアニメーション
         transform.DOJump(goal, 1.0f, 1, 0.5f).SetEase(Ease.OutQuad);
     }
 }

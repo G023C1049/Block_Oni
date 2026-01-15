@@ -121,3 +121,8 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   PlayerId: 
+  Role: 
+  moveSpeed: 6
+  blockLayer:
+    serializedVersion: 2
+    m_Bits: 64
