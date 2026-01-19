@@ -21,7 +21,7 @@ android {
         minSdkVersion 22
         targetSdkVersion 36
         ndk {
-            abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
         }
         versionCode 1
         versionName '0.1'
@@ -40,8 +40,6 @@ android {
     packagingOptions {
         doNotStrip '*/armeabi-v7a/*.so'
         doNotStrip '*/arm64-v8a/*.so'
-        doNotStrip '*/x86/*.so'
-        doNotStrip '*/x86_64/*.so'
         jniLibs {
             useLegacyPackaging true
         }
@@ -92,8 +90,6 @@ android {
         doLast {
               BuildIl2Cpp(projectDir.toString().replaceAll('\\\\', '/'), 'Debug', 'armv7', 'armeabi-v7a', [  ] as String[]);
               BuildIl2Cpp(projectDir.toString().replaceAll('\\\\', '/'), 'Debug', 'arm64', 'arm64-v8a', [  ] as String[]);
-              BuildIl2Cpp(projectDir.toString().replaceAll('\\\\', '/'), 'Debug', 'x86', 'x86', [  ] as String[]);
-              BuildIl2Cpp(projectDir.toString().replaceAll('\\\\', '/'), 'Debug', 'x64', 'x86_64', [  ] as String[]);
         }
     }
     afterEvaluate {

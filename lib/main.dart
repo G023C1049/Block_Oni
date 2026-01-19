@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_unity_widget/flutter_unity_widget.dart';
-//Hello~
 
 // --- ここから追加 ---
 void main() {
@@ -11,6 +10,8 @@ void main() {
 // --- ここまで追加 ---
 
 class BattleScreen extends StatefulWidget {
+  const BattleScreen({super.key});
+
   @override
   _BattleScreenState createState() => _BattleScreenState();
 }
@@ -53,11 +54,11 @@ class _BattleScreenState extends State<BattleScreen> {
     // 例: "MoveComplete" が来たら次のターンへ
   }
 
-  // Flutter -> Unity へメッセージ送信
+  // Flutter    -> Unity へメッセージ送信
   void _sendDiceRoll() {
     // 第1引数: Unityのオブジェクト名
     // 第2引数: メソッド名
-    // 第3引数: 引数(String)
+    // 第3引数: 引数(String)       
     _unityWidgetController?.postMessage(
       'GameManager', 
       'OnReceiveFlutterMessage', 
