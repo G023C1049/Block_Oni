@@ -10,26 +10,8 @@ public class Square : MonoBehaviour
     public string FaceName; 
     public Vector2Int LocalCoordinates; 
 
-    // 初期設定時の法線（ローカル基準として保持）
-    public Vector3 BaseUpVector; 
-
-    // ★追加: 現在のワールド空間での法線を取得するプロパティ
-    // MapPivot（親）が回転しても、それに応じて正しく変換された向きを返す
-    public Vector3 CurrentNormal
-    {
-        get
-        {
-            if (transform.parent != null)
-            {
-                // 親（MapPivot）の回転を考慮して変換
-                return transform.parent.TransformDirection(BaseUpVector);
-            }
-            return BaseUpVector;
-        }
-    }
-
-    // 互換性のためのプロパティ（古いコードがUpVectorを参照している場合用）
-    public Vector3 UpVector => CurrentNormal;
+    public Vector3 CurrentNormal => transform.up;
+    public Vector3 UpVector => transform.up;
 
     [Header("状態")]
     public bool IsBlocked = false; 
@@ -38,20 +20,7 @@ public class Square : MonoBehaviour
     private GameObject itemVisual; 
     public List<string> ConnectedIds = new List<string>();
 
-    public void SetupNormal()
-    {
-        // 初期法線をセット（ローカル基準）
-        switch (FaceName)
-        {
-            case "Top":    BaseUpVector = Vector3.up;    break;
-            case "Bottom": BaseUpVector = Vector3.down;  break;
-            case "Left":   BaseUpVector = Vector3.left;  break;
-            case "Right":  BaseUpVector = Vector3.right; break;
-            case "Front":  BaseUpVector = Vector3.forward; break;
-            case "Back":   BaseUpVector = Vector3.back;    break;
-            default:       BaseUpVector = Vector3.up;    break;
-        }
-    }
+    public void SetupNormal() { }
 
     public void SetHighlight(bool isActive)
     {
@@ -65,9 +34,20 @@ public class Square : MonoBehaviour
         CurrentItem = type;
         if (prefab != null)
         {
-            // CurrentNormalを使って配置
-            itemVisual = Instantiate(prefab, transform.position + CurrentNormal * 0.8f, Quaternion.identity);
+            // アイテム生成
+            itemVisual = Instantiate(prefab, transform.position + CurrentNormal * 0.5f, Quaternion.identity);
             itemVisual.transform.parent = this.transform;
+            itemVisual.transform.localRotation = Quaternion.identity;
+
+            // ★修正: 親(パネル)がつぶれている分、子(アイテム)を引き伸ばして補正する
+            // パネルのScaleは (1.0, 0.1, 1.0)
+            // そのため、Y方向に 1/0.1 = 10倍 の補正をかけないと球体にならない
+            
+            // アイテム自体の見た目のサイズを 0.5 くらいにしたい場合
+            // X: 0.5 / 1.0 = 0.5
+            // Y: 0.5 / 0.1 = 5.0  <-- ここ重要
+            // Z: 0.5 / 1.0 = 0.5
+            itemVisual.transform.localScale = new Vector3(0.5f, 5.0f, 0.5f);
         }
     }
 

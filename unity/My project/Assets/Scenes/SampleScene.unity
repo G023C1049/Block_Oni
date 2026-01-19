@@ -505,7 +505,7 @@ MonoBehaviour:
   rotateSpeed: 5
   minVerticalAngle: -30
   maxVerticalAngle: 60
-  focusOffset: {x: 0, y: 4, z: 0}
+  focusOffset: {x: 0, y: 5, z: 0}
 --- !u!114 &963194230
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -831,7 +831,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   cubePrefab: {fileID: 700827896052391984, guid: 490ac1882b95c874385ed870b9f1128f, type: 3}
-  spacing: 1.1
+  spacing: 1
+  mapSize: 5
+  panelScale: {x: 0.95, y: 0.1, z: 0.95}
   MapPivot: {fileID: 0}
 --- !u!114 &1720258665
 MonoBehaviour:
