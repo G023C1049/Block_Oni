@@ -1,58 +1,69 @@
 using UnityEngine;
-using DG.Tweening; // スムーズなズームなどに使用
 
 public class CameraController : MonoBehaviour
 {
     [Header("ターゲット")]
-    public Transform target; // 回転の中心（ステージ中央）
+    public Transform target; // MapPivot
 
     [Header("設定")]
-    public float rotateSpeed = 5.0f; // 回転速度
-    public float distance = 12.0f;   // 中心からの距離
-    public float minVerticalAngle = -30f; // 縦回転の下限
-    public float maxVerticalAngle = 60f;  // 縦回転の上限
+    public float distance = 15.0f;   // 全体が見えるように少し引く
+    public float rotateSpeed = 5.0f; 
+    public float minVerticalAngle = -10f; 
+    public float maxVerticalAngle = 80f;  
 
-    // 内部変数
+    [Header("位置調整")]
+    // ★ここが重要: 中心をY方向にずらす設定
+    public Vector3 focusOffset = new Vector3(0, 2.5f, 0); 
+
     private float currentX = 0f;
-    private float currentY = 20f; // 初期角度
+    private float currentY = 30f; 
 
     void Start()
     {
-        // ターゲットが未設定なら、仮の中心（2.2, 2.2, 2.2）を見る
-        // ※5x5マスの中心はおよそこのあたりです
-        if (target == null)
-        {
-            GameObject tempTarget = new GameObject("CameraTarget");
-            tempTarget.transform.position = new Vector3(2.2f, 2.2f, 2.2f);
-            target = tempTarget.transform;
-        }
+        Vector3 angles = transform.eulerAngles;
+        currentX = angles.y;
+        currentY = angles.x;
+    }
+
+    public void SetTarget(Transform newTarget)
+    {
+        target = newTarget;
     }
 
     void Update()
     {
-        // マウスドラッグ（スマホタップ移動）で回転
         if (Input.GetMouseButton(0))
         {
-            float mouseX = Input.GetAxis("Mouse X");
-            float mouseY = Input.GetAxis("Mouse Y");
-
-            currentX += mouseX * rotateSpeed;
-            currentY -= mouseY * rotateSpeed;
-
-            // 縦回転の制限
+            currentX += Input.GetAxis("Mouse X") * rotateSpeed;
+            currentY -= Input.GetAxis("Mouse Y") * rotateSpeed;
             currentY = Mathf.Clamp(currentY, minVerticalAngle, maxVerticalAngle);
         }
     }
 
     void LateUpdate()
     {
-        if (target == null) return;
+        Vector3 targetPos = (target != null) ? target.position : Vector3.zero;
 
-        // 計算した角度と距離でカメラ位置を決定
+        // ★ターゲット位置にずらし量を足す
+        Vector3 finalTargetPos = targetPos + focusOffset;
+
         Quaternion rotation = Quaternion.Euler(currentY, currentX, 0);
-        Vector3 position = rotation * new Vector3(0, 0, -distance) + target.position;
+        Vector3 negDistance = new Vector3(0.0f, 0.0f, -distance);
+        
+        Vector3 position = rotation * negDistance + finalTargetPos;
 
         transform.rotation = rotation;
         transform.position = position;
+    }
+
+    // ★デバッグ機能: カメラが見ている場所を赤い玉で表示
+    void OnDrawGizmos()
+    {
+        if (target != null)
+        {
+            Gizmos.color = Color.red;
+            // 現在の注視点を描画
+            Gizmos.DrawSphere(target.position + focusOffset, 0.5f);
+        }
     }
 }
