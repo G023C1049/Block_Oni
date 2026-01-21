@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../main.dart'; // navigatorKeyへのアクセスのため
 import '../providers/user_provider.dart';
+// GameScreenへの遷移用
+import 'game_screen.dart';
 
 /* ===============================
-  [cite_start]タイトル画面 [cite: 20]
+  タイトル画面
 ================================ */
 class TitleScreen extends StatefulWidget {
   const TitleScreen({super.key});
@@ -44,12 +46,25 @@ class _TitleScreenState extends State<TitleScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     // タイトルロゴ等
+                    const Icon(
+                      Icons.extension,
+                      size: 100,
+                      color: Colors.cyan,
+                    ),
+                    const SizedBox(height: 20),
                     const Text(
-                      'ブロックおに',
+                      'Block Oni',
                       style: TextStyle(
                         fontSize: 36,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 2.0,
+                      ),
+                    ),
+                    const Text(
+                      'ブロックおに',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.grey,
                       ),
                     ),
 
@@ -103,7 +118,7 @@ class _TitleScreenState extends State<TitleScreen> {
                                   foregroundColor: Colors.white,
                                 ),
                                 onPressed: () async {
-                                  // Providerを通じて保存処理を実行 [cite: 51]
+                                  // Providerを通じて保存処理を実行
                                   final success = await context
                                       .read<UserProvider>()
                                       .saveUsername(_nameController.text);
@@ -132,25 +147,43 @@ class _TitleScreenState extends State<TitleScreen> {
                     /* ===== ゲーム開始エリア ===== */
                     GestureDetector(
                       onTap: () {
-                        // TODO: バリデーションチェック後にロビー画面へ遷移
-                        // Navigator.pushNamed(context, '/lobby');
+                        // TODO: 必要であればここでバリデーションチェック（名前が未入力なら開始しない等）
+
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('ロビーへ接続します...')),
+                          const SnackBar(content: Text('ゲームを開始します...')),
+                        );
+
+                        // ゲーム画面へ遷移 (title_addブランチのロジックを採用)
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (context) => const GameScreen(),
+                          ),
                         );
                       },
-                      child: Column(
-                        children: [
-                          Icon(
-                            Icons.play_circle_fill,
-                            size: 80,
-                            color: Colors.orangeAccent.shade400,
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'GAME START',
-                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                          ),
-                        ],
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                        decoration: BoxDecoration(
+                          color: Colors.orangeAccent.shade400,
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Colors.black26,
+                              blurRadius: 10,
+                              offset: Offset(0, 4),
+                            )
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: const [
+                            Icon(Icons.play_circle_fill, color: Colors.white, size: 30),
+                            SizedBox(width: 10),
+                            Text(
+                              "GAME START",
+                              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
