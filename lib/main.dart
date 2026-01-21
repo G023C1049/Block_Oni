@@ -2,29 +2,70 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_unity_widget/flutter_unity_widget.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+// 自作ファイルのインポート
+import 'screens/title_screen.dart';
+import 'services/socket_service.dart';
+import 'services/unity_bridge_service.dart';
+import 'providers/user_provider.dart';
 import 'providers/game_rule_manager.dart';
 
-void main() {
-  runApp(const MyApp());
+// グローバルナビゲーションキー (Overlay表示などに使用)
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+void main() async {
+  // Flutterエンジンの初期化
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // SharedPreferences のインスタンスを事前に取得
+  final prefs = await SharedPreferences.getInstance();
+
+  // シングルトンサービスのインスタンス生成
+  final socketService = SocketService();
+  final unityBridge = UnityBridgeService();
+
+  // Socket通信の初期化
+  socketService.init("ws://localhost:3000");
+
+  runApp(
+    MultiProvider(
+      providers: [
+        // インフラ層サービスをDI
+        Provider.value(value: socketService),
+        Provider.value(value: unityBridge),
+
+        // 状態管理・ユースケース層 (MVVM)
+        ChangeNotifierProvider(create: (_) => UserProvider(unityBridge, prefs)),
+      ],
+      child: const MyApp(),
+    ),
+  );
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
-      title: 'Block Oni',
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF1E1E1E),
-        primaryColor: Colors.redAccent,
-        dividerColor: Colors.grey,
+      title: 'ブロックおに',
+      theme: ThemeData(
+        useMaterial3: true,
+        primarySwatch: Colors.cyan,
+        scaffoldBackgroundColor: Colors.white,
       ),
-      home: const GamePage(),
+      // アプリの起動時はタイトル画面を表示
+      home: const TitleScreen(),
     );
   }
 }
+
+// --- 以下、ゲーム画面のロジック ---
+// ※将来的には lib/screens/game_page.dart に移動推奨
 
 class GamePage extends StatefulWidget {
   const GamePage({Key? key}) : super(key: key);
@@ -44,7 +85,6 @@ class _GamePageState extends State<GamePage> {
 
   final ScrollController _scrollController = ScrollController();
   bool _isDiceRolled = false;
-  // bool _isItemPanelExpanded = false; // ExpansionTileを使うので変数は不要ですが、残っていても問題ありません
 
   @override
   void dispose() {
@@ -116,7 +156,6 @@ class _GamePageState extends State<GamePage> {
   void _handleUseItem(String itemId, String itemName) {
     if (_unityWidgetController == null) return;
     
-    // ★修正: playerInventory ではなく currentInventory を使用
     int count = _ruleManager.currentInventory[itemId] ?? 0;
     
     if (count <= 0) {
@@ -212,7 +251,7 @@ class _GamePageState extends State<GamePage> {
     return Theme(
       data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
       child: ExpansionTile(
-        title: const Text("ITEMS", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+        title: const Text("ITEMS", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
         subtitle: const Text("タップして展開", style: TextStyle(fontSize: 10, color: Colors.grey)),
         initiallyExpanded: false,
         children: [
@@ -237,7 +276,6 @@ class _GamePageState extends State<GamePage> {
   }
 
   Widget _buildItemButton(String id, String name, IconData icon, Color color) {
-    // ★修正: playerInventory ではなく currentInventory を使用
     int count = _ruleManager.currentInventory[id] ?? 0;
     bool hasItem = count > 0;
 
