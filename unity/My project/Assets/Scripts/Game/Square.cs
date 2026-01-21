@@ -1,7 +1,8 @@
 using UnityEngine;
 using System.Collections.Generic;
 
-public enum ItemType { None, SpeedUp, Block }
+// ★修正: AddDiceValueを削除し、3種類(SpeedUp, Teleport, StageRotate) + Block/None に整理
+public enum ItemType { None, SpeedUp, Block, Teleport, StageRotate }
 
 public class Square : MonoBehaviour
 {
@@ -39,15 +40,29 @@ public class Square : MonoBehaviour
             itemVisual.transform.parent = this.transform;
             itemVisual.transform.localRotation = Quaternion.identity;
 
-            // ★修正: 親(パネル)がつぶれている分、子(アイテム)を引き伸ばして補正する
-            // パネルのScaleは (1.0, 0.1, 1.0)
-            // そのため、Y方向に 1/0.1 = 10倍 の補正をかけないと球体にならない
-            
-            // アイテム自体の見た目のサイズを 0.5 くらいにしたい場合
-            // X: 0.5 / 1.0 = 0.5
-            // Y: 0.5 / 0.1 = 5.0  <-- ここ重要
-            // Z: 0.5 / 1.0 = 0.5
+            // サイズ補正
             itemVisual.transform.localScale = new Vector3(0.5f, 5.0f, 0.5f);
+
+            // ★修正: 色分け処理 (AddDiceValue削除)
+            Renderer r = itemVisual.GetComponent<Renderer>();
+            if (r != null)
+            {
+                switch (type)
+                {
+                    case ItemType.SpeedUp:
+                        r.material.color = Color.yellow; // 黄色
+                        break;
+                    case ItemType.Teleport:
+                        r.material.color = Color.magenta; // 紫
+                        break;
+                    case ItemType.StageRotate:
+                        r.material.color = new Color(1f, 0.5f, 0f); // オレンジ
+                        break;
+                    default:
+                        r.material.color = Color.white;
+                        break;
+                }
+            }
         }
     }
 

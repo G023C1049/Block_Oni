@@ -1,8 +1,8 @@
 import 'dart:convert';
-import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_unity_widget/flutter_unity_widget.dart';
+import 'providers/game_rule_manager.dart';
 
 void main() {
   runApp(const MyApp());
@@ -17,8 +17,9 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'Block Oni',
       theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF1E1E1E), // 暗めの背景
+        scaffoldBackgroundColor: const Color(0xFF1E1E1E),
         primaryColor: Colors.redAccent,
+        dividerColor: Colors.grey,
       ),
       home: const GamePage(),
     );
@@ -34,18 +35,16 @@ class GamePage extends StatefulWidget {
 
 class _GamePageState extends State<GamePage> {
   UnityWidgetController? _unityWidgetController;
-  
-  // ゲームログ用のリスト
+  final GameRuleManager _ruleManager = GameRuleManager();
+
   final List<String> _gameLogs = [
     "システム: ゲームを開始します。",
-    "システム: 鬼のターンです。",
+    "システム: 10ターン逃げ切れば逃走者の勝ちです。",
   ];
 
   final ScrollController _scrollController = ScrollController();
-  
-  // 現在のプレイヤー状態（仮）
-  String _currentPlayer = "Oni1";
   bool _isDiceRolled = false;
+  // bool _isItemPanelExpanded = false; // ExpansionTileを使うので変数は不要ですが、残っていても問題ありません
 
   @override
   void dispose() {
@@ -54,60 +53,36 @@ class _GamePageState extends State<GamePage> {
     super.dispose();
   }
 
-  // --- Unityとの連携部分 ---
-
   void _onUnityCreated(controller) {
     _unityWidgetController = controller;
-    // 必要なら初期化メッセージを送る
-    // _sendMessageToUnity("Init", "");
   }
 
   void _onUnityMessage(message) {
-      try {
-        var data = jsonDecode(message.toString());
-        
-        // ★追加: Unityから計算結果が届いたら詳細ログを出す
-        if (data['type'] == 'DiceCalculated') {
-          String baseVal = data['base'];
-          String bonusVal = data['bonus'];
-          String totalVal = data['total'];
-          
-          // アイテムボーナスがある場合とない場合でメッセージを変えると親切
-          if (int.parse(bonusVal) > 0) {
-            _addLog("🎲 出目[$baseVal] + アイテム[$bonusVal] = 【$totalValマス】進みます！");
-          } else {
-            _addLog("🎲 出目[$baseVal] = 【$totalValマス】進みます！");
-          }
-          return; // これ以上処理しない
-        }
+    try {
+      var data = jsonDecode(message.toString());
+      
+      if (data['type'] == 'StatusUpdate') {
+        setState(() {
+          _ruleManager.gameStatusMessage = data['message'];
+        });
+        return;
+      }
 
-      // その他のメッセージ
-      _addLog("Unity: $message");
+      String? logMessage = _ruleManager.handleUnityMessage(data);
+      if (logMessage != null) {
+        _addLog(logMessage);
+      }
+      setState(() {});
+
     } catch (e) {
-      _addLog("Unity(raw): $message");
+      _addLog("Error: $message");
     }
   }
-
-  // UnityへJSONメッセージを送る関数
-  void _sendMessageToUnity(String type, Map<String, dynamic> data) {
-    if (_unityWidgetController != null) {
-      data['type'] = type;
-      String jsonStr = jsonEncode(data);
-      _unityWidgetController!.postMessage(
-        'GameManager', // Unity側のGameObject名
-        'OnReceiveFlutterMessage', // メソッド名
-        jsonStr, // 引数(JSON文字列)
-      );
-    }
-  }
-
-  // --- UIロジック ---
 
   void _addLog(String text) {
     setState(() {
       _gameLogs.add(text);
     });
-    // ログ自動スクロール
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -119,22 +94,16 @@ class _GamePageState extends State<GamePage> {
     });
   }
 
-void _handleDiceRoll() {
+  void _handleDiceRoll() {
     if (_isDiceRolled) return;
 
-    int result = Random().nextInt(6) + 1;
-    
-    // ★修正: ここでは確定メッセージを出さず、送信したことだけ記録する（または何も出さない）
-    // _addLog("🎲 ダイスを振りました: 結果 [$result]"); // ←これは削除またはコメントアウト
-    _addLog("🎲 ダイスを振っています..."); // ←これに変更
-
-    _sendMessageToUnity("DiceRolled", {"result": result.toString()});
+    _addLog("🎲 ダイスを振っています...");
+    _ruleManager.rollDice(_unityWidgetController);
 
     setState(() {
       _isDiceRolled = true;
     });
 
-    // テスト用リセット（3秒後）
     Future.delayed(const Duration(seconds: 3), () {
       if (mounted) {
         setState(() {
@@ -144,15 +113,28 @@ void _handleDiceRoll() {
     });
   }
 
-  // --- 画面構築 ---
+  void _handleUseItem(String itemId, String itemName) {
+    if (_unityWidgetController == null) return;
+    
+    // ★修正: playerInventory ではなく currentInventory を使用
+    int count = _ruleManager.currentInventory[itemId] ?? 0;
+    
+    if (count <= 0) {
+      _addLog("❌ $itemName を持っていません！");
+      return;
+    }
+
+    _addLog("✨ アイテム使用: $itemName");
+    _ruleManager.useItem(_unityWidgetController, itemId);
+    
+    setState(() {}); 
+  }
 
   @override
   Widget build(BuildContext context) {
-    // 横画面レイアウト
     return Scaffold(
       body: Row(
         children: [
-          // 左側: Unity画面 (画面の70%)
           Expanded(
             flex: 7,
             child: Container(
@@ -160,13 +142,11 @@ void _handleDiceRoll() {
               child: UnityWidget(
                 onUnityCreated: _onUnityCreated,
                 onUnityMessage: _onUnityMessage,
-                useAndroidViewSurface: true, // Androidで安定させる設定
+                useAndroidViewSurface: true,
                 fullscreen: false,
               ),
             ),
           ),
-          
-          // 右側: UIパネル (画面の30%)
           Expanded(
             flex: 3,
             child: Container(
@@ -176,17 +156,12 @@ void _handleDiceRoll() {
               ),
               child: Column(
                 children: [
-                  // 1. ヘッダー (プレイヤー情報)
                   _buildStatusHeader(),
-                  const Divider(color: Colors.grey),
-
-                  // 2. ログ表示エリア (スクロール可能)
-                  Expanded(
-                    child: _buildLogView(),
-                  ),
-                  const Divider(color: Colors.grey),
-
-                  // 3. アクションエリア (ボタンなど)
+                  const Divider(color: Colors.grey, height: 1),
+                  Expanded(child: _buildLogView()),
+                  const Divider(color: Colors.grey, height: 1),
+                  _buildExpandableItemArea(),
+                  const Divider(color: Colors.grey, height: 1),
                   _buildActionArea(),
                 ],
               ),
@@ -199,28 +174,16 @@ void _handleDiceRoll() {
 
   Widget _buildStatusHeader() {
     return Padding(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(12.0),
       child: Column(
         children: [
-          const Text(
-            "CURRENT TURN",
-            style: TextStyle(color: Colors.grey, fontSize: 12),
-          ),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 24),
-            decoration: BoxDecoration(
-              color: Colors.redAccent.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.redAccent),
-            ),
+          const Text("GAME INFO", style: TextStyle(color: Colors.grey, fontSize: 10)),
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
             child: Text(
-              _currentPlayer,
-              style: const TextStyle(
-                color: Colors.redAccent,
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
+              _ruleManager.gameStatusMessage,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
             ),
           ),
         ],
@@ -231,58 +194,100 @@ void _handleDiceRoll() {
   Widget _buildLogView() {
     return ListView.builder(
       controller: _scrollController,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(8),
       itemCount: _gameLogs.length,
       itemBuilder: (context, index) {
         return Padding(
-          padding: const EdgeInsets.only(bottom: 8.0),
+          padding: const EdgeInsets.only(bottom: 4.0),
           child: Text(
             _gameLogs[index],
-            style: const TextStyle(color: Colors.white70, fontSize: 13),
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
           ),
         );
       },
     );
   }
 
-  Widget _buildActionArea() {
-    return Container(
-      padding: const EdgeInsets.all(16.0),
-      color: const Color(0xFF1E1E1E),
-      child: Column(
+  Widget _buildExpandableItemArea() {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        title: const Text("ITEMS", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+        subtitle: const Text("タップして展開", style: TextStyle(fontSize: 10, color: Colors.grey)),
+        initiallyExpanded: false,
         children: [
-          // ダイスボタン
-          SizedBox(
-            width: double.infinity,
-            height: 60,
-            child: ElevatedButton.icon(
-              onPressed: _isDiceRolled ? null : _handleDiceRoll,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blueAccent,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 5,
-              ),
-              icon: const Icon(Icons.casino, size: 28),
-              label: const Text(
-                "ROLL DICE",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
+          Container(
+            height: 100, 
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            color: Colors.black12,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _buildItemButton("SpeedUp", "加速(+2)", Icons.flash_on, Colors.yellow),
+                const SizedBox(width: 8),
+                _buildItemButton("Teleport", "ワープ", Icons.wifi_tethering, Colors.purpleAccent),
+                const SizedBox(width: 8),
+                _buildItemButton("StageRotate", "回転", Icons.rotate_right, Colors.orange),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
-          // その他のボタン例
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              IconButton(onPressed: () {}, icon: const Icon(Icons.settings, color: Colors.grey)),
-              IconButton(onPressed: () {}, icon: const Icon(Icons.chat, color: Colors.grey)),
-              IconButton(onPressed: () {}, icon: const Icon(Icons.help_outline, color: Colors.grey)),
-            ],
-          )
         ],
+      ),
+    );
+  }
+
+  Widget _buildItemButton(String id, String name, IconData icon, Color color) {
+    // ★修正: playerInventory ではなく currentInventory を使用
+    int count = _ruleManager.currentInventory[id] ?? 0;
+    bool hasItem = count > 0;
+
+    return InkWell(
+      onTap: hasItem ? () => _handleUseItem(id, name) : null,
+      child: Container(
+        width: 70, 
+        decoration: BoxDecoration(
+          color: hasItem ? color.withOpacity(0.2) : Colors.black26,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: hasItem ? color : Colors.grey),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: hasItem ? color : Colors.grey, size: 24),
+            const SizedBox(height: 2),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(name, style: TextStyle(color: hasItem ? Colors.white : Colors.grey, fontSize: 10)),
+            ),
+            Text("x$count", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionArea() {
+    return Container(
+      padding: const EdgeInsets.all(12.0),
+      child: SizedBox(
+        width: double.infinity,
+        height: 50,
+        child: ElevatedButton.icon(
+          onPressed: _isDiceRolled ? null : _handleDiceRoll,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blueAccent,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+          ),
+          icon: const Icon(Icons.casino, size: 24),
+          label: const Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text("ROLL DICE", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ),
       ),
     );
   }
