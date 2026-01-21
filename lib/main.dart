@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// 各画面とサービスのインポート
+// 自作ファイルのインポート
 import 'screens/title_screen.dart';
 import 'services/socket_service.dart';
 import 'services/unity_bridge_service.dart';
 import 'providers/user_provider.dart';
 
-// グローバルナビゲーションキー
+// グローバルナビゲーションキー (Overlay表示などに使用)
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
@@ -18,11 +19,11 @@ void main() async {
   // SharedPreferences のインスタンスを事前に取得
   final prefs = await SharedPreferences.getInstance();
 
-  // サービスのインスタンス生成
+  // シングルトンサービスのインスタンス生成
   final socketService = SocketService();
   final unityBridge = UnityBridgeService();
 
-  // Socket通信の初期化 (環境に合わせてURLを変更してください)
+  // Socket通信の初期化
   socketService.init("ws://localhost:3000");
 
   runApp(
@@ -32,7 +33,7 @@ void main() async {
         Provider.value(value: socketService),
         Provider.value(value: unityBridge),
 
-        // 状態管理・ユースケース層
+        // 状態管理・ユースケース層 (MVVM)
         ChangeNotifierProvider(create: (_) => UserProvider(unityBridge, prefs)),
       ],
       child: const MyApp(),
@@ -54,7 +55,7 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.cyan,
         scaffoldBackgroundColor: Colors.white,
       ),
-      // アプリ起動時はタイトル画面を表示
+      // アプリの起動時はタイトル画面を表示
       home: const TitleScreen(),
     );
   }
