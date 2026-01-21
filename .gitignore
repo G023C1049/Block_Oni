@@ -112,3 +112,4 @@ app.*.map.json
 # -----------------------
 # Unityから書き出されたAndroidプロジェクトは巨大すぎるため丸ごと無視する
 **/android/unityLibrary/
+

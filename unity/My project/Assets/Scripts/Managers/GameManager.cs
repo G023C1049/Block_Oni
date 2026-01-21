@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Scripting;
 using Newtonsoft.Json;
 using FlutterUnityIntegration;
 using BlockOni.Models;
@@ -35,11 +36,11 @@ public class GameManager : MonoBehaviour
     public int turnCount = 1;
     
     private PlayerController CurrentPlayer => players[currentPlayerIndex];
-    private List<string> activeMovableIds = new List<string>(); // 現在選択可能なマス
+    private List<string> activeMovableIds = new List<string>(); 
 
     private bool isWaitingForDice = true;
-    private bool isWaitingForDirection = false; // 方向選択待ちフラグ
-    private bool isMoving = false; // 移動アニメーション中
+    private bool isWaitingForDirection = false; 
+    private bool isMoving = false; 
     private bool isGameEnded = false;
     private bool isEventPlaying = false; 
 
@@ -64,10 +65,10 @@ public class GameManager : MonoBehaviour
         var camController = mainCamera.GetComponent<CameraController>();
         if (camController != null && mapGenerator.MapPivot != null) camController.SetTarget(mapGenerator.MapPivot);
 
+        SpawnPlayer("Runner", "Runner", "Top_2_2", matRunner);
         SpawnPlayer("Oni1", "Oni",    "Top_0_0", matOni);
         SpawnPlayer("Oni2", "Oni",    "Top_4_0", matOni);
         SpawnPlayer("Oni3", "Oni",    "Top_0_4", matOni);
-        SpawnPlayer("Runner", "Runner", "Top_2_2", matRunner);
 
         if (isDebugMode) SpawnRandomItems(5);
         if (resultPanel != null) resultPanel.SetActive(false);
@@ -88,45 +89,35 @@ public class GameManager : MonoBehaviour
     {
         if (isGameEnded || isEventPlaying) return; 
 
-        // ダイス (Rキー)
+        // デバッグ用（キーボードのRでダイス）
         if (isDebugMode && Input.GetKeyDown(KeyCode.R) && isWaitingForDice)
         {
             int baseDice = Random.Range(1, 7); 
             int finalDice = baseDice + CurrentPlayer.DiceBonus;
             
-            CurrentPlayer.DiceBonus = 0;
+            CurrentPlayer.DiceBonus = 0; // 消費
             UpdateGameInfoUI();
-
-            // ダイス結果を処理
+            
             OnDiceRolled(finalDice);
             
+            // Flutter側にも結果通知（表示同期のため）
             string json = $"{{\"type\":\"DiceRolled\", \"result\":\"{finalDice}\"}}";
             if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
         }
 
-        if (Input.GetMouseButtonDown(0))
-        {
-            HandleClickInteraction();
-        }
+        if (Input.GetMouseButtonDown(0)) HandleClickInteraction();
     }
 
     void OnDiceRolled(int result)
     {
         ShowDiceAnimation(result);
-        
-        // プレイヤーに残り歩数をセット
         CurrentPlayer.RemainingSteps = result;
-        
         isWaitingForDice = false;
-        
-        // 1歩目の処理を開始
         ProcessNextStep();
     }
 
-    // 次の1歩をどうするか決めるメソッド
     void ProcessNextStep()
     {
-        // 0. 歩数が残っていないならターン終了
         if (CurrentPlayer.RemainingSteps <= 0)
         {
             Debug.Log("移動終了");
@@ -134,30 +125,21 @@ public class GameManager : MonoBehaviour
             return;
         }
 
-        // 1. 隣接する移動候補を取得
         List<string> candidates = MoveCalculator.GetImmediateCandidates(CurrentPlayer);
-
-        // ハイライト初期化
         foreach(var sq in MapGenerator.AllSquares.Values) sq.SetHighlight(false);
         activeMovableIds.Clear();
 
         if (candidates.Count == 0)
         {
-            // 行き止まり
             Debug.Log("行き止まり！");
             CurrentPlayer.RemainingSteps = 0;
             CheckWinCondition();
         }
         else
         {
-            // ★修正: 候補が1つでも複数でも、必ずプレイヤーの入力を待つ
-            // 一本道でも自動移動せず、一歩ずつ進める仕様に変更
             Debug.Log($"移動先を選択してください (残り{CurrentPlayer.RemainingSteps}歩)");
-            
             isWaitingForDirection = true;
             activeMovableIds = candidates;
-
-            // 候補をハイライト
             foreach (string id in candidates)
             {
                 if(MapGenerator.AllSquares.ContainsKey(id))
@@ -166,29 +148,22 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    // 1歩移動を実行
     void ExecuteOneStep(string targetId)
     {
-        // 入力待ち解除
         isWaitingForDirection = false;
         foreach(var sq in MapGenerator.AllSquares.Values) sq.SetHighlight(false);
         activeMovableIds.Clear();
 
-        // プレイヤーを動かす
         CurrentPlayer.MoveOneStep(targetId, () => 
         {
-            // 移動完了時のコールバック -> 次のステップへ
-            UpdateGameInfoUI(); // 歩数表示更新用
+            UpdateGameInfoUI();
             ProcessNextStep();
         });
     }
 
-    // クリック処理
     void HandleClickInteraction()
     {
         if (isGameEnded || isEventPlaying || isMoving) return;
-
-        // 方向選択待ちでないなら無視
         if (!isWaitingForDirection) return;
 
         Ray ray = mainCamera.ScreenPointToRay(Input.mousePosition);
@@ -198,10 +173,8 @@ public class GameManager : MonoBehaviour
         {
             GameObject hitObj = hit.collider.gameObject;
             Square clickedSquare = hitObj.GetComponent<Square>();
-
             if (clickedSquare == null) return;
 
-            // ハイライトされているマスをクリックしたら、そこへ1歩進む
             if (activeMovableIds.Contains(clickedSquare.ID))
             {
                 hitObj.transform.DOPunchScale(Vector3.one * 0.2f, 0.2f, 10, 1);
@@ -210,7 +183,6 @@ public class GameManager : MonoBehaviour
         }
     }
     
-    // (以下、変更なし)
     void SpawnRandomItems(int count)
     {
         if (itemPrefab == null) return;
@@ -231,8 +203,11 @@ public class GameManager : MonoBehaviour
     {
         if (MapGenerator.AllSquares.ContainsKey(startSquareId))
         {
-            Vector3 startPos = MapGenerator.AllSquares[startSquareId].transform.position;
-            GameObject pObj = Instantiate(playerPrefab, startPos + Vector3.up, Quaternion.identity);
+            Square sq = MapGenerator.AllSquares[startSquareId];
+            Vector3 startPos = sq.transform.position;
+            Vector3 normal = sq.UpVector;
+            float heightOffset = 0.6f;
+            GameObject pObj = Instantiate(playerPrefab, startPos + normal * heightOffset, Quaternion.identity);
             PlayerController pc = pObj.GetComponent<PlayerController>();
             pc.Setup(id, role, startSquareId);
             pc.SetMaterial(mat);
@@ -250,17 +225,54 @@ public class GameManager : MonoBehaviour
         }
     }
 
+[Preserve] 
     public void OnReceiveFlutterMessage(string jsonMessage)
     {
-        var data = JsonConvert.DeserializeObject<Dictionary<string, string>>(jsonMessage);
-        if (data == null || !data.ContainsKey("type")) return;
+        Debug.Log($"<color=cyan>【Flutter受信】: {jsonMessage}</color>");
 
-        switch (data["type"])
+        try
         {
-            // DiceRolledなどの受信処理は内部メソッドで完結しているため記述省略可
+            var data = JsonConvert.DeserializeObject<Dictionary<string, string>>(jsonMessage);
+            if (data == null || !data.ContainsKey("type")) return;
+
+            switch (data["type"])
+            {
+                case "DiceRolled":
+                    if(data.ContainsKey("result"))
+                    {
+                        // 1. Flutterから基本の出目を取得
+                        int baseResult = int.Parse(data["result"]);
+                        
+                        // 2. ボーナスを加算
+                        int bonus = CurrentPlayer.DiceBonus;
+                        int finalResult = baseResult + bonus;
+
+                        Debug.Log($"基本: {baseResult} + ボーナス: {bonus} = 合計: {finalResult}");
+
+                        // ★追加: 計算結果をFlutterに通知する
+                        // JSONを手動で構築して送信
+                        string resultJson = $"{{\"type\":\"DiceCalculated\", \"base\":\"{baseResult}\", \"bonus\":\"{bonus}\", \"total\":\"{finalResult}\"}}";
+                        if (UnityMessageManager.Instance != null)
+                        {
+                            UnityMessageManager.Instance.SendMessageToFlutter(resultJson);
+                        }
+
+                        // 3. ボーナス消費＆UI更新
+                        CurrentPlayer.DiceBonus = 0;
+                        UpdateGameInfoUI();
+
+                        // 4. 移動開始
+                        OnDiceRolled(finalResult);
+                    }
+                    break;
+            }
+        }
+        catch(System.Exception e)
+        {
+            Debug.LogError($"メッセージ受信エラー: {e.Message}");
         }
     }
-
+    
     void ShowDiceAnimation(int result)
     {
         if (diceResultText != null)
@@ -328,15 +340,12 @@ public class GameManager : MonoBehaviour
     {
         isEventPlaying = true;
         foreach(var p in players) p.transform.SetParent(mapGenerator.MapPivot);
-        
         Vector3 axis = (Random.value > 0.5f) ? Vector3.right : Vector3.forward;
         mapGenerator.RotateStage(axis, 90f, 2.0f);
-        
         yield return new WaitForSeconds(2.0f);
-        
         foreach(var p in players) p.transform.SetParent(null);
         isEventPlaying = false;
         isWaitingForDice = true;
         isWaitingForDirection = false;
     }
-}   
+}

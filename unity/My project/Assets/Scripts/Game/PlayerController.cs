@@ -9,8 +9,6 @@ public class PlayerController : MonoBehaviour
     public string Role;
     public string CurrentSquareId;
     public string LastSquareId;       
-    
-    // ★重要: 残り歩数管理
     public int RemainingSteps;        
     public int DiceBonus = 0;
 
@@ -24,7 +22,7 @@ public class PlayerController : MonoBehaviour
         this.PlayerId = id;
         this.Role = role;
         this.CurrentSquareId = startSquareId;
-        this.LastSquareId = ""; // 最初は履歴なし
+        this.LastSquareId = ""; 
         this.RemainingSteps = 0;
         this.DiceBonus = 0;
 
@@ -32,10 +30,6 @@ public class PlayerController : MonoBehaviour
         {
             nameText.text = id;
             nameText.color = (role == "Oni") ? Color.red : Color.cyan;
-        }
-        if (MapGenerator.AllSquares.ContainsKey(startSquareId))
-        {
-            UpdateRotation(MapGenerator.AllSquares[startSquareId].UpVector);
         }
     }
 
@@ -49,24 +43,22 @@ public class PlayerController : MonoBehaviour
         }
     }
 
-    // 1マス移動し、完了時に callback を呼ぶ
     public void MoveOneStep(string nextSquareId, System.Action onComplete)
     {
         if (!MapGenerator.AllSquares.ContainsKey(nextSquareId)) return;
 
-        // 履歴更新
         LastSquareId = CurrentSquareId;
         CurrentSquareId = nextSquareId;
-        RemainingSteps--; // 歩数を減らす
+        RemainingSteps--; 
 
         Square nextSq = MapGenerator.AllSquares[nextSquareId];
         Vector3 targetPos = nextSq.transform.position;
         Vector3 normal = nextSq.UpVector;
 
-        // ゴール計算
-        Vector3 goal = targetPos + normal * 1.0f;
+        // ★高さ調整: パネル中心から0.6浮かす（表面に乗る）
+        float heightOffset = 0.6f; 
+        Vector3 goal = targetPos + normal * heightOffset;
 
-        // 回転演出
         Vector3 moveDir = (goal - transform.position).normalized;
         if (moveDir != Vector3.zero)
         {
@@ -74,13 +66,23 @@ public class PlayerController : MonoBehaviour
             transform.DORotateQuaternion(targetRot, 0.2f);
         }
 
-        // ジャンプ移動 (0.4秒でピョン)
-        transform.DOJump(goal, 1.0f, 1, 0.4f).SetEase(Ease.Linear)
+        transform.DOJump(goal, 0.5f, 1, 0.4f).SetEase(Ease.Linear)
             .OnComplete(() => {
                 UpdateRotation(normal);
                 CheckItemPickup();
-                onComplete?.Invoke(); // 完了通知
+                onComplete?.Invoke(); 
             });
+    }
+
+    public void MoveToSquare(string nextSquareId, Vector3 targetPos)
+    {
+        Square nextSq = MapGenerator.AllSquares[nextSquareId];
+        Vector3 normal = nextSq.UpVector;
+        float heightOffset = 0.6f;
+        Vector3 goal = targetPos + normal * heightOffset;
+
+        transform.DOJump(goal, 0.5f, 1, 0.5f).SetEase(Ease.Linear)
+             .OnComplete(() => UpdateRotation(normal));
     }
 
     void UpdateRotation(Vector3 upVector)
@@ -94,10 +96,6 @@ public class PlayerController : MonoBehaviour
 
     void CheckItemPickup()
     {
-        // 最後の1歩（止まったマス）でのみアイテムを拾うのが普通だが、
-        // 通過点でも拾える仕様ならここで処理。今回は「止まったとき」にするため
-        // ここでは一旦ログだけ出すか、アイテム取得ロジックをGameManager側に寄せても良い。
-        // いったん「通過でも拾う」仕様のままにしておきます。
         if (MapGenerator.AllSquares.ContainsKey(CurrentSquareId))
         {
             Square currentSq = MapGenerator.AllSquares[CurrentSquareId];
