@@ -34,6 +34,7 @@ public class GameManager : MonoBehaviour
     public List<PlayerController> players = new List<PlayerController>();
     public int currentPlayerIndex = 0;
     public int turnCount = 1;
+    public int MaxTurnLimit = 10;
     
     private PlayerController CurrentPlayer => players[currentPlayerIndex];
     private List<string> activeMovableIds = new List<string>(); 
@@ -53,7 +54,9 @@ public class GameManager : MonoBehaviour
 
     void Start()
     {
-        if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter("UnityReady");
+        string readyJson = $"{{\"type\":\"UnityReady\"}}";
+        if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(readyJson);
+        
         DOVirtual.DelayedCall(0.1f, InitializeGame);
     }
 
@@ -82,6 +85,8 @@ public class GameManager : MonoBehaviour
         isMoving = false;
 
         UpdateGameInfoUI();
+        SendTurnChangeToFlutter(); 
+        
         if(isDebugMode) Debug.Log($"ゲーム開始: 第{turnCount}ターン / 手番: {CurrentPlayer.PlayerId}");
     }
 
@@ -89,30 +94,41 @@ public class GameManager : MonoBehaviour
     {
         if (isGameEnded || isEventPlaying) return; 
 
-        // デバッグ用（キーボードのRでダイス）
-        if (isDebugMode && Input.GetKeyDown(KeyCode.R) && isWaitingForDice)
+        if (isDebugMode && Input.GetKeyDown(KeyCode.R))
         {
-            int baseDice = Random.Range(1, 7); 
-            int finalDice = baseDice + CurrentPlayer.DiceBonus;
-            
-            CurrentPlayer.DiceBonus = 0; // 消費
-            UpdateGameInfoUI();
-            
-            OnDiceRolled(finalDice);
-            
-            // Flutter側にも結果通知（表示同期のため）
-            string json = $"{{\"type\":\"DiceRolled\", \"result\":\"{finalDice}\"}}";
-            if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
+            if (CurrentPlayer.RemainingSteps <= 0) ReceiveDiceResult(Random.Range(1, 7));
         }
 
         if (Input.GetMouseButtonDown(0)) HandleClickInteraction();
+    }
+
+    void ReceiveDiceResult(int baseResult)
+    {
+        Debug.Log($"ReceiveDiceResult called: base={baseResult}");
+        try
+        {
+            int bonus = CurrentPlayer.DiceBonus;
+            int finalResult = baseResult + bonus;
+
+            string json = $"{{\"type\":\"DiceCalculated\", \"base\":\"{baseResult}\", \"bonus\":\"{bonus}\", \"total\":\"{finalResult}\"}}";
+            if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
+
+            CurrentPlayer.DiceBonus = 0;
+            UpdateGameInfoUI();
+            OnDiceRolled(finalResult);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"ReceiveDiceResult Error: {e.Message}");
+        }
     }
 
     void OnDiceRolled(int result)
     {
         ShowDiceAnimation(result);
         CurrentPlayer.RemainingSteps = result;
-        isWaitingForDice = false;
+        CurrentPlayer.TotalStepsInTurn = result; 
+        isWaitingForDice = false; 
         ProcessNextStep();
     }
 
@@ -134,6 +150,12 @@ public class GameManager : MonoBehaviour
             Debug.Log("行き止まり！");
             CurrentPlayer.RemainingSteps = 0;
             CheckWinCondition();
+        }
+        else if (candidates.Count == 1)
+        {
+            isWaitingForDirection = true;
+            activeMovableIds = candidates;
+            MapGenerator.AllSquares[candidates[0]].SetHighlight(true);
         }
         else
         {
@@ -183,20 +205,94 @@ public class GameManager : MonoBehaviour
         }
     }
     
+    public void ActivateItem(string itemType)
+    {
+        if (isGameEnded || isEventPlaying) return;
+        Debug.Log($"アイテム使用: {itemType}");
+
+        switch(itemType)
+        {
+            case "Teleport":
+                var validCandidates = MapGenerator.AllSquares.Values
+                    .Where(sq => Vector3.Dot(sq.transform.up, Vector3.down) < 0.5f) 
+                    .Select(sq => sq.ID)
+                    .ToList();
+
+                if (validCandidates.Count > 0)
+                {
+                    string randomId = validCandidates[Random.Range(0, validCandidates.Count)];
+                    CurrentPlayer.ForceMoveTo(randomId, () => {
+                        CheckWinCondition();
+                    });
+                }
+                else
+                {
+                    Debug.LogWarning("ワープ可能なマスが見つかりませんでした");
+                }
+                break;
+
+            case "StageRotate":
+                StartCoroutine(RotateStageEvent(1.0f));
+                break;
+            
+            // ★修正: AddDiceValueを削除し、SpeedUpのみにする
+            case "SpeedUp":
+                if (!isWaitingForDice)
+                {
+                    Debug.LogWarning("ダイスを振った後なので加速アイテムは使えません");
+                    return; 
+                }
+                CurrentPlayer.DiceBonus += 2;
+                UpdateGameInfoUI();
+                break;
+        }
+    }
+
     void SpawnRandomItems(int count)
     {
         if (itemPrefab == null) return;
-        var allIds = MapGenerator.AllSquares.Keys.ToList();
-        int spawned = 0; int attempts = 0;
-        while (spawned < count && attempts < 100) {
-            attempts++;
-            string randomId = allIds[Random.Range(0, allIds.Count)];
-            Square sq = MapGenerator.AllSquares[randomId];
-            if (sq.CurrentItem == ItemType.None) {
-                sq.SpawnItem(ItemType.SpeedUp, itemPrefab);
-                spawned++;
+
+        var availableSquares = MapGenerator.AllSquares.Values
+            .Where(sq => sq.CurrentItem == ItemType.None)
+            .ToList();
+
+        if (count > availableSquares.Count) count = availableSquares.Count;
+
+        // ★修正: アイテム種別を3種類に限定
+        List<ItemType> allTypes = new List<ItemType> { 
+            ItemType.SpeedUp, 
+            ItemType.Teleport, 
+            ItemType.StageRotate 
+        };
+
+        int spawnedCount = 0;
+
+        while (spawnedCount < count && availableSquares.Count > 0)
+        {
+            ItemType nextType;
+
+            if (spawnedCount < allTypes.Count)
+            {
+                // フェーズA: 最初の3回で全種類を配置
+                nextType = allTypes[spawnedCount];
             }
+            else
+            {
+                // フェーズB: 残りはランダム
+                nextType = allTypes[Random.Range(0, allTypes.Count)];
+            }
+
+            int targetIndex = Random.Range(0, availableSquares.Count);
+            Square targetSq = availableSquares[targetIndex];
+
+            targetSq.SpawnItem(nextType, itemPrefab);
+
+            availableSquares.RemoveAt(targetIndex);
+            
+            spawnedCount++;
         }
+        
+        Debug.Log($"アイテム生成完了: {spawnedCount}個 (3種類配置保証済み)");
     }
 
     void SpawnPlayer(string id, string role, string startSquareId, Material mat)
@@ -221,15 +317,26 @@ public class GameManager : MonoBehaviour
         {
             string role = (CurrentPlayer.Role == "Oni") ? "鬼" : "逃走者";
             string steps = (CurrentPlayer.RemainingSteps > 0) ? $" 残り{CurrentPlayer.RemainingSteps}歩" : "";
-            gameInfoText.text = $"Turn {turnCount}\nPlayer: {CurrentPlayer.PlayerId} ({role}){steps}";
+            gameInfoText.text = $"Turn {turnCount}/{MaxTurnLimit}\nPlayer: {CurrentPlayer.PlayerId} ({role}){steps}";
+
+            string statusMsg = $"Turn {turnCount} / 手番: {CurrentPlayer.PlayerId}";
+            if (CurrentPlayer.RemainingSteps > 0) statusMsg += $" (残り{CurrentPlayer.RemainingSteps}歩)";
+            
+            string json = $"{{\"type\":\"StatusUpdate\", \"message\":\"{statusMsg}\"}}";
+            if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
         }
     }
 
-[Preserve] 
+    void SendTurnChangeToFlutter()
+    {
+        string json = $"{{\"type\":\"TurnChange\", \"playerId\":\"{CurrentPlayer.PlayerId}\"}}";
+        if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
+    }
+
+    [Preserve] 
     public void OnReceiveFlutterMessage(string jsonMessage)
     {
         Debug.Log($"<color=cyan>【Flutter受信】: {jsonMessage}</color>");
-
         try
         {
             var data = JsonConvert.DeserializeObject<Dictionary<string, string>>(jsonMessage);
@@ -238,32 +345,22 @@ public class GameManager : MonoBehaviour
             switch (data["type"])
             {
                 case "DiceRolled":
-                    if(data.ContainsKey("result"))
+                    if (isEventPlaying || CurrentPlayer.RemainingSteps > 0) 
                     {
-                        // 1. Flutterから基本の出目を取得
-                        int baseResult = int.Parse(data["result"]);
-                        
-                        // 2. ボーナスを加算
-                        int bonus = CurrentPlayer.DiceBonus;
-                        int finalResult = baseResult + bonus;
-
-                        Debug.Log($"基本: {baseResult} + ボーナス: {bonus} = 合計: {finalResult}");
-
-                        // ★追加: 計算結果をFlutterに通知する
-                        // JSONを手動で構築して送信
-                        string resultJson = $"{{\"type\":\"DiceCalculated\", \"base\":\"{baseResult}\", \"bonus\":\"{bonus}\", \"total\":\"{finalResult}\"}}";
-                        if (UnityMessageManager.Instance != null)
-                        {
-                            UnityMessageManager.Instance.SendMessageToFlutter(resultJson);
-                        }
-
-                        // 3. ボーナス消費＆UI更新
-                        CurrentPlayer.DiceBonus = 0;
-                        UpdateGameInfoUI();
-
-                        // 4. 移動開始
-                        OnDiceRolled(finalResult);
+                        Debug.LogWarning($"ダイス命令を無視: Event={isEventPlaying}, Steps={CurrentPlayer.RemainingSteps}");
+                        return;
                     }
+                    if (!isWaitingForDice && CurrentPlayer.RemainingSteps > 0)
+                    {
+                        Debug.LogWarning("ダイス不可状態");
+                        return;
+                    }
+
+                    if(data.ContainsKey("result")) ReceiveDiceResult(int.Parse(data["result"]));
+                    break;
+
+                case "UseItem":
+                    if(data.ContainsKey("itemId")) ActivateItem(data["itemId"]);
                     break;
             }
         }
@@ -272,7 +369,7 @@ public class GameManager : MonoBehaviour
             Debug.LogError($"メッセージ受信エラー: {e.Message}");
         }
     }
-    
+
     void ShowDiceAnimation(int result)
     {
         if (diceResultText != null)
@@ -291,6 +388,7 @@ public class GameManager : MonoBehaviour
         var runner = players.FirstOrDefault(p => p.Role == "Runner");
         var onis = players.Where(p => p.Role == "Oni").ToList();
         if (runner == null) return;
+        
         bool oniWin = false;
         foreach (var oni in onis)
         {
@@ -300,8 +398,20 @@ public class GameManager : MonoBehaviour
                 break;
             }
         }
-        if (oniWin) ShowResult("ONI TEAM WIN!");
-        else NextTurn();
+        
+        if (oniWin) 
+        {
+            ShowResult("ONI TEAM WIN!");
+            return;
+        }
+
+        if (turnCount >= MaxTurnLimit && currentPlayerIndex == players.Count - 1)
+        {
+            ShowResult("RUNNER WINS! (Time Up)");
+            return;
+        }
+
+        NextTurn();
     }
 
     void ShowResult(string message)
@@ -314,38 +424,102 @@ public class GameManager : MonoBehaviour
             resultText.transform.localScale = Vector3.zero;
             resultText.transform.DOScale(1.0f, 0.5f).SetEase(Ease.OutBack);
         }
+        string json = $"{{\"type\":\"GameEnd\", \"result\":\"{message}\"}}";
+        if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
         Debug.Log($"<color=red>【GAME SET】{message}</color>");
     }
 
     void NextTurn()
     {
         if (isGameEnded) return;
+        
         currentPlayerIndex = (currentPlayerIndex + 1) % players.Count;
         if (currentPlayerIndex == 0) turnCount++;
+        
+        CurrentPlayer.RemainingSteps = 0;
+        isWaitingForDice = true; 
+        isWaitingForDirection = false;
+        
         UpdateGameInfoUI();
+        SendTurnChangeToFlutter();
 
         if (currentPlayerIndex == 0 && turnCount > 1 && (turnCount - 1) % 4 == 0)
         {
+            isWaitingForDice = false; 
             StartCoroutine(RotateStageEvent());
         }
         else
         {
-            isWaitingForDice = true;
-            isWaitingForDirection = false;
             if(isDebugMode) Debug.Log($"第{turnCount}ターン / 次: {CurrentPlayer.PlayerId}");
         }
     }
 
-    IEnumerator RotateStageEvent()
+    IEnumerator RotateStageEvent(float duration = 2.0f)
     {
         isEventPlaying = true;
         foreach(var p in players) p.transform.SetParent(mapGenerator.MapPivot);
+        
         Vector3 axis = (Random.value > 0.5f) ? Vector3.right : Vector3.forward;
-        mapGenerator.RotateStage(axis, 90f, 2.0f);
-        yield return new WaitForSeconds(2.0f);
+        mapGenerator.RotateStage(axis, 90f, duration);
+        yield return new WaitForSeconds(duration);
+        
         foreach(var p in players) p.transform.SetParent(null);
+
+        CheckAndTeleportBottomPlayers();
+
         isEventPlaying = false;
-        isWaitingForDice = true;
+        isWaitingForDice = true; 
         isWaitingForDirection = false;
+        
+        SendTurnChangeToFlutter();
+    }
+
+    void CheckAndTeleportBottomPlayers()
+    {
+        foreach(var p in players)
+        {
+            if(!MapGenerator.AllSquares.ContainsKey(p.CurrentSquareId)) continue;
+            
+            Square currentSq = MapGenerator.AllSquares[p.CurrentSquareId];
+            
+            if (Vector3.Dot(currentSq.transform.up, Vector3.down) > 0.9f)
+            {
+                Debug.Log($"{p.PlayerId} is on BOTTOM face! Teleporting...");
+                Square targetSq = FindTopSquareAt(currentSq.transform.position.x, currentSq.transform.position.z);
+                
+                if (targetSq != null)
+                {
+                    p.CurrentSquareId = targetSq.ID;
+                    Vector3 targetPos = targetSq.transform.position;
+                    Vector3 normal = targetSq.UpVector;
+                    float heightOffset = 0.6f;
+                    p.transform.position = targetPos + normal * heightOffset;
+                    
+                    Vector3 forward = p.transform.forward;
+                    if (Mathf.Abs(Vector3.Dot(forward, normal)) > 0.99f) forward = Vector3.forward;
+                    p.transform.rotation = Quaternion.LookRotation(forward, normal);
+                }
+            }
+        }
+    }
+
+    Square FindTopSquareAt(float worldX, float worldZ)
+    {
+        Square bestSq = null;
+        float maxY = -999f;
+        
+        foreach(var sq in MapGenerator.AllSquares.Values)
+        {
+            if (Mathf.Abs(sq.transform.position.x - worldX) < 0.2f &&
+                Mathf.Abs(sq.transform.position.z - worldZ) < 0.2f)
+            {
+                if (sq.transform.position.y > maxY)
+                {
+                    maxY = sq.transform.position.y;
+                    bestSq = sq;
+                }
+            }
+        }
+        return bestSq;
     }
 }

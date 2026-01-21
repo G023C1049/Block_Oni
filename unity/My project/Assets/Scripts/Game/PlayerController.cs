@@ -2,20 +2,31 @@ using UnityEngine;
 using DG.Tweening; 
 using UnityEngine.UI;
 using System.Collections.Generic;
+using FlutterUnityIntegration; // 追加
 
 public class PlayerController : MonoBehaviour
 {
     public string PlayerId;
     public string Role;
     public string CurrentSquareId;
-    public string LastSquareId;       
+    public string LastSquareId;        
     public int RemainingSteps;        
     public int DiceBonus = 0;
+    public int TotalStepsInTurn = 0;
+
+    // ★追加: 元のスケールを保持
+    private Vector3 originalScale;
 
     [Header("見た目・UI")]
     public Renderer meshRenderer; 
     public Text nameText; 
     public List<ItemType> OwnedItems = new List<ItemType>();
+
+    void Start()
+    {
+        // ★追加: 開始時のスケールを保存
+        originalScale = transform.localScale;
+    }
 
     public void Setup(string id, string role, string startSquareId)
     {
@@ -25,6 +36,7 @@ public class PlayerController : MonoBehaviour
         this.LastSquareId = ""; 
         this.RemainingSteps = 0;
         this.DiceBonus = 0;
+        this.TotalStepsInTurn = 0;
 
         if (nameText != null)
         {
@@ -55,7 +67,6 @@ public class PlayerController : MonoBehaviour
         Vector3 targetPos = nextSq.transform.position;
         Vector3 normal = nextSq.UpVector;
 
-        // ★高さ調整: パネル中心から0.6浮かす（表面に乗る）
         float heightOffset = 0.6f; 
         Vector3 goal = targetPos + normal * heightOffset;
 
@@ -74,15 +85,27 @@ public class PlayerController : MonoBehaviour
             });
     }
 
-    public void MoveToSquare(string nextSquareId, Vector3 targetPos)
+    public void ForceMoveTo(string targetSquareId, System.Action onComplete)
     {
-        Square nextSq = MapGenerator.AllSquares[nextSquareId];
+        if (!MapGenerator.AllSquares.ContainsKey(targetSquareId)) return;
+
+        LastSquareId = CurrentSquareId;
+        CurrentSquareId = targetSquareId;
+        
+        Square nextSq = MapGenerator.AllSquares[targetSquareId];
+        Vector3 targetPos = nextSq.transform.position;
         Vector3 normal = nextSq.UpVector;
-        float heightOffset = 0.6f;
+        float heightOffset = 0.6f; 
         Vector3 goal = targetPos + normal * heightOffset;
 
-        transform.DOJump(goal, 0.5f, 1, 0.5f).SetEase(Ease.Linear)
-             .OnComplete(() => UpdateRotation(normal));
+        // ★修正: 1.0f ではなく originalScale に戻すことで巨大化を防ぐ
+        transform.DOScale(Vector3.zero, 0.3f).OnComplete(() => {
+            transform.position = goal;
+            UpdateRotation(normal);
+            transform.DOScale(originalScale, 0.3f).OnComplete(() => {
+                onComplete?.Invoke();
+            });
+        });
     }
 
     void UpdateRotation(Vector3 upVector)
@@ -101,9 +124,16 @@ public class PlayerController : MonoBehaviour
             Square currentSq = MapGenerator.AllSquares[CurrentSquareId];
             if (currentSq.CurrentItem != ItemType.None)
             {
-                Debug.Log($"<color=yellow>【ITEM】{PlayerId} は {currentSq.CurrentItem} を拾った！</color>");
-                if (currentSq.CurrentItem == ItemType.SpeedUp) DiceBonus += 1;
+                string itemTypeStr = currentSq.CurrentItem.ToString();
+                Debug.Log($"<color=yellow>【ITEM】{PlayerId} は {itemTypeStr} を拾った！</color>");
+                
                 OwnedItems.Add(currentSq.CurrentItem);
+                
+                // ★追加: Flutterへアイテム取得を通知する
+                // JSON: {"type": "ItemPickup", "playerId": "Oni1", "itemId": "SpeedUp"}
+                string json = $"{{\"type\":\"ItemPickup\", \"playerId\":\"{PlayerId}\", \"itemId\":\"{itemTypeStr}\"}}";
+                if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
+
                 currentSq.RemoveItem();
             }
         }
