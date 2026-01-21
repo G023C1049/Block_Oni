@@ -1,0 +1,53 @@
+{
+  "output": {
+    "filePath": "repomix-output.xml",
+    "style": "xml",
+    "headerText": "Unity + Flutter Project Codebase"
+  },
+  "ignore": {
+    "useGitignore": false,
+    "useDefaultPatterns": true,
+    "customPatterns": [
+      "**/*.meta",
+      "**/*.mat",
+      "**/*.prefab",
+      "**/*.unity",
+      "**/*.asset",
+      "**/Library/",
+      "**/Temp/",
+      "**/Obj/",
+      "**/Build/",
+      "**/Logs/",
+      "**/UserSettings/",
+      "**/.dart_tool/",
+      "**/build/",
+      "**/.flutter-plugins",
+      "**/.flutter-plugins-dependencies",
+      "**/*.png",
+      "**/*.jpg",
+      "**/*.jpeg",
+      "**/*.gif",
+      "**/*.bmp",
+      "**/*.tga",
+      "**/*.mp3",
+      "**/*.wav",
+      "**/*.ogg",
+      "**/*.fbx",
+      "**/*.obj",
+      "**/*.blend",
+      "**/*.ttf",
+      "**/*.otf"
+    ]
+  },
+  "include": [
+
+    "unity/My project/Assets/Scripts/**/*.cs",
+    
+
+    "unity/My project/Assets/FlutterUnityIntegration/**/*.cs",
+    
+
+    "lib/**/*.dart",
+    "pubspec.yaml"
+  ]
+}

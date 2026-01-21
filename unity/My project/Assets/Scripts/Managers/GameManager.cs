@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Scripting;
 using Newtonsoft.Json;
 using FlutterUnityIntegration;
 using BlockOni.Models;
@@ -69,7 +70,6 @@ public class GameManager : MonoBehaviour
         SpawnPlayer("Oni2", "Oni",    "Top_4_0", matOni);
         SpawnPlayer("Oni3", "Oni",    "Top_0_4", matOni);
 
-
         if (isDebugMode) SpawnRandomItems(5);
         if (resultPanel != null) resultPanel.SetActive(false);
         isGameEnded = false;
@@ -89,13 +89,18 @@ public class GameManager : MonoBehaviour
     {
         if (isGameEnded || isEventPlaying) return; 
 
+        // デバッグ用（キーボードのRでダイス）
         if (isDebugMode && Input.GetKeyDown(KeyCode.R) && isWaitingForDice)
         {
             int baseDice = Random.Range(1, 7); 
             int finalDice = baseDice + CurrentPlayer.DiceBonus;
-            CurrentPlayer.DiceBonus = 0;
+            
+            CurrentPlayer.DiceBonus = 0; // 消費
             UpdateGameInfoUI();
+            
             OnDiceRolled(finalDice);
+            
+            // Flutter側にも結果通知（表示同期のため）
             string json = $"{{\"type\":\"DiceRolled\", \"result\":\"{finalDice}\"}}";
             if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
         }
@@ -220,13 +225,54 @@ public class GameManager : MonoBehaviour
         }
     }
 
+[Preserve] 
     public void OnReceiveFlutterMessage(string jsonMessage)
     {
-        var data = JsonConvert.DeserializeObject<Dictionary<string, string>>(jsonMessage);
-        if (data == null || !data.ContainsKey("type")) return;
-        switch (data["type"]) { }
-    }
+        Debug.Log($"<color=cyan>【Flutter受信】: {jsonMessage}</color>");
 
+        try
+        {
+            var data = JsonConvert.DeserializeObject<Dictionary<string, string>>(jsonMessage);
+            if (data == null || !data.ContainsKey("type")) return;
+
+            switch (data["type"])
+            {
+                case "DiceRolled":
+                    if(data.ContainsKey("result"))
+                    {
+                        // 1. Flutterから基本の出目を取得
+                        int baseResult = int.Parse(data["result"]);
+                        
+                        // 2. ボーナスを加算
+                        int bonus = CurrentPlayer.DiceBonus;
+                        int finalResult = baseResult + bonus;
+
+                        Debug.Log($"基本: {baseResult} + ボーナス: {bonus} = 合計: {finalResult}");
+
+                        // ★追加: 計算結果をFlutterに通知する
+                        // JSONを手動で構築して送信
+                        string resultJson = $"{{\"type\":\"DiceCalculated\", \"base\":\"{baseResult}\", \"bonus\":\"{bonus}\", \"total\":\"{finalResult}\"}}";
+                        if (UnityMessageManager.Instance != null)
+                        {
+                            UnityMessageManager.Instance.SendMessageToFlutter(resultJson);
+                        }
+
+                        // 3. ボーナス消費＆UI更新
+                        CurrentPlayer.DiceBonus = 0;
+                        UpdateGameInfoUI();
+
+                        // 4. 移動開始
+                        OnDiceRolled(finalResult);
+                    }
+                    break;
+            }
+        }
+        catch(System.Exception e)
+        {
+            Debug.LogError($"メッセージ受信エラー: {e.Message}");
+        }
+    }
+    
     void ShowDiceAnimation(int result)
     {
         if (diceResultText != null)
