@@ -4,6 +4,9 @@ import '../providers/user_provider.dart';
 import '../overlays/global_overlay.dart'; // 設定画面表示用
 import '../screens/settings_overlay.dart'; // 設定画面の中身
 
+/* ===============================
+  タイトル画面
+================================ */
 class TitleScreen extends StatefulWidget {
   const TitleScreen({super.key});
 
