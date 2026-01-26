@@ -40,17 +40,12 @@ public class MapGenerator : MonoBehaviour
 
         // --- 座標計算の準備 ---
         // マップ全体の物理的な半径（中心から表面までの距離）
-        // 例: size=5, spacing=1.0 の場合、幅は5.0。中心(0)から端までは2.5。
         float mapRadius = (mapSize * spacing) / 2.0f;
 
         // パネルの中心座標を決めるためのオフセット
-        // 表面(2.5)から、パネルの厚みの半分(0.05)だけ内側に入れた場所(2.45)に配置すると
-        // パネルの外側面がぴったり2.5のラインに揃う。
         float facePos = mapRadius - (panelScale.y / 2.0f);
 
         // --- 6つの面を独立して生成 ---
-        // これにより、角（コーナー）には3枚のパネルが生成され、隙間なく埋まる
-        
         GenerateFace("Top",    Vector3.up,      facePos);
         GenerateFace("Bottom", Vector3.down,    facePos);
         GenerateFace("Front",  Vector3.forward, facePos);
@@ -68,10 +63,6 @@ public class MapGenerator : MonoBehaviour
         int blockLayerIndex = LayerMask.NameToLayer("Block");
         
         // 軸の定義
-        // normalが Y軸(Up/Down)なら -> X, Z でループ
-        // normalが Z軸(Front/Back)なら -> X, Y でループ
-        // normalが X軸(Right/Left)なら -> Z, Y でループ
-        
         for (int i = 0; i < mapSize; i++)
         {
             for (int j = 0; j < mapSize; j++)
@@ -88,29 +79,20 @@ public class MapGenerator : MonoBehaviour
                 // 面ごとの座標変換
                 if (faceName == "Top" || faceName == "Bottom")
                 {
-                    // Y軸固定、X(u)・Z(v)平面
-                    // normal方向 * distFromCenter で面の高さが決まる
                     localPos = (normal * distFromCenter) + new Vector3(u, 0, v);
-                    
-                    // ID: Top_0_0 〜 Top_4_4
                     id = $"{faceName}_{i}_{j}";
                     coord = new Vector2Int(i + 1, j + 1);
                 }
                 else if (faceName == "Front" || faceName == "Back")
                 {
-                    // Z軸固定、X(u)・Y(v)平面
                     localPos = (normal * distFromCenter) + new Vector3(u, v, 0);
-                    
                     id = $"{faceName}_{i}_{j}";
                     coord = new Vector2Int(i + 1, j + 1);
                 }
                 else if (faceName == "Right" || faceName == "Left")
                 {
-                    // X軸固定、Z(u)・Y(v)平面
-                    // ※右面・左面は Z, Y の順で回すと自然
                     localPos = (normal * distFromCenter) + new Vector3(0, v, u);
-                    
-                    id = $"{faceName}_{i}_{j}"; // IDは Z_Y (横_縦)
+                    id = $"{faceName}_{i}_{j}";
                     coord = new Vector2Int(i + 1, j + 1);
                 }
 
@@ -135,7 +117,11 @@ public class MapGenerator : MonoBehaviour
                 sq.FaceName = faceName;
                 sq.ID = id;
                 sq.LocalCoordinates = coord;
-                sq.IsBlocked = (faceName == "Bottom"); // 底面はブロック扱い等のロジックがあれば
+                
+                // ★修正: 生成時は「通行止め」にしない。
+                // 実際に通れるかどうかは移動時に MoveCalculator で「今、下を向いているか」判定する。
+                sq.IsBlocked = false; 
+
                 sq.SetupNormal();
 
                 if (!AllSquares.ContainsKey(sq.ID))
@@ -157,10 +143,6 @@ public class MapGenerator : MonoBehaviour
     // 隣接マスの接続
     void ConnectNeighbors()
     {
-        // 接続距離の閾値
-        // パネル間の距離は1.0。角（コーナー）での距離は √((0.5)^2 + (0.5)^2) ≒ 0.7 程度だが、
-        // 独立生成したパネル中心間の距離はコーナーでも 約1.0 〜 1.1 程度になる。
-        // 余裕を持って 1.5 倍程度で接続判定を行う
         float connectThreshold = spacing * 1.5f;
 
         foreach (var kvp in AllSquares)
@@ -175,9 +157,9 @@ public class MapGenerator : MonoBehaviour
                 float dist = Vector3.Distance(current.transform.position, target.transform.position);
                 if (dist <= connectThreshold)
                 {
-                    // 裏面同士がつながらないように、法線の向きチェックを入れても良いが、
-                    // 5x5サイズなら距離だけで十分フィルタリングされる
-                    if (!target.IsBlocked) current.ConnectedIds.Add(target.ID);
+                    // ★修正: ここで IsBlocked をチェックせず、無条件でつなぐ。
+                    // これで「元底面」だったマスへのリンクが保持される。
+                    current.ConnectedIds.Add(target.ID);
                 }
             }
         }

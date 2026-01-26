@@ -1,137 +1,99 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/group_provider.dart';
+import '../providers/user_provider.dart';
 
-// クラス名が「WaitingRoomScreen」であることを確認！
-class WaitingRoomScreen extends StatefulWidget {
+class WaitingRoomScreen extends StatelessWidget {
   const WaitingRoomScreen({super.key});
 
   @override
-  State<WaitingRoomScreen> createState() => _WaitingRoomScreenState();
-}
-
-class _WaitingRoomScreenState extends State<WaitingRoomScreen> {
-  bool isChatOpen = false;
-  final chatController = TextEditingController();
-
-  @override
   Widget build(BuildContext context) {
-    final groupProvider = Provider.of<GroupProvider>(context);
+    final groupProvider = context.watch<GroupProvider>();
+    final userProvider = context.read<UserProvider>();
     final group = groupProvider.currentGroup;
 
-    // もしデータが空ならエラー表示
+    // もしデータが空ならエラー表示（通常ありえないが念のため）
     if (group == null) {
-      return const Scaffold(body: Center(child: Text('グループが見つかりません')));
+      return Scaffold(
+        appBar: AppBar(title: const Text('エラー')),
+        body: const Center(child: Text('グループが見つかりません')),
+      );
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('待機室: ${group.name}'),
-        actions: [
-          IconButton(icon: const Icon(Icons.settings), onPressed: () {}),
-        ],
+        title: Text('待機室: ${group.name} (ID: ${group.id})'),
+        backgroundColor: Colors.cyan,
+        foregroundColor: Colors.white,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            // 退出処理
+            groupProvider.leaveGroup(userProvider.username);
+            Navigator.of(context).pop();
+          },
+        ),
       ),
-      body: Stack(
+      body: Column(
         children: [
-          // 待機画面のメインレイアウト
-          Column(
-            children: [
-              Expanded(
-                child: GridView.builder(
-                  padding: const EdgeInsets.all(40),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    mainAxisSpacing: 20,
-                    crossAxisSpacing: 20,
-                  ),
-                  itemCount: 4,
-                  itemBuilder: (context, index) {
-                    bool hasUser = index < group.members.length;
-                    return CircleAvatar(
-                      backgroundColor: hasUser ? Colors.blue : Colors.grey[300],
-                      child: Icon(Icons.person, size: 50, color: hasUser ? Colors.white : Colors.grey),
-                    );
-                  },
-                ),
-              ),
-              // 下部の操作ボタン
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    // チャットを開くボタン
-                    IconButton(
-                      icon: const Icon(Icons.list_alt, size: 40),
-                      onPressed: () => setState(() => isChatOpen = !isChatOpen),
-                    ),
-                    const SizedBox(width: 20),
-                    // プレイボタン
-                    ElevatedButton(
-                      onPressed: () {},
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
-                        backgroundColor: Colors.orange,
-                      ),
-                      child: const Text('play', style: TextStyle(fontSize: 20, color: Colors.white)),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+          const SizedBox(height: 20),
+          const Text(
+            "参加メンバー",
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
+          const SizedBox(height: 10),
           
-          // チャットのオーバーレイ表示（右側）
-          if (isChatOpen)
-            Positioned(
-              right: 0, top: 0, bottom: 0,
-              width: 300,
-              child: Card(
-                margin: EdgeInsets.zero,
-                elevation: 16,
-                child: Column(
-                  children: [
-                    AppBar(
-                      title: const Text('チャット'),
-                      leading: IconButton(icon: const Icon(Icons.close), onPressed: () => setState(() => isChatOpen = false)),
-                    ),
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: group.chatHistory.length,
-                        itemBuilder: (context, i) {
-                          return ListTile(
-                            title: Text(group.chatHistory[i]['message']!),
-                            subtitle: Text(group.chatHistory[i]['time']!),
-                          );
-                        },
+          // メンバーリスト表示
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: group.members.length,
+              itemBuilder: (context, index) {
+                final memberName = group.members[index];
+                final isMe = memberName == userProvider.username;
+                
+                return Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.person),
+                    title: Text(
+                      memberName,
+                      style: TextStyle(
+                        fontWeight: isMe ? FontWeight.bold : FontWeight.normal,
+                        color: isMe ? Colors.cyan : Colors.black,
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: chatController,
-                              decoration: const InputDecoration(hintText: 'メッセージ...'),
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.send),
-                            onPressed: () {
-                              if (chatController.text.isNotEmpty) {
-                                groupProvider.sendChatMessage(chatController.text, group.id);
-                                chatController.clear();
-                              }
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                    trailing: index == 0 ? const Chip(label: Text("ホスト")) : null,
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // ゲーム開始ボタンエリア
+          Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orangeAccent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () {
+                  // ゲーム画面へ遷移
+                  Navigator.pushNamed(context, '/game');
+                },
+                child: const Text(
+                  "ゲーム開始！",
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
               ),
             ),
+          ),
         ],
       ),
     );
