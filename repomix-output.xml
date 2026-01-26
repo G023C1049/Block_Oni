@@ -47,6 +47,22 @@ Unity + Flutter Project Codebase
 
 <directory_structure>
 lib/main.dart
+lib/models/game_data.dart
+lib/models/item.dart
+lib/models/player.dart
+lib/overlays/global_overlay.dart
+lib/providers/game_rule_manager.dart
+lib/providers/group_provider.dart
+lib/providers/lobby_view_model.dart
+lib/providers/user_provider.dart
+lib/screens/game_screen.dart
+lib/screens/lobby_screen.dart
+lib/screens/settings_overlay.dart
+lib/screens/title_screen.dart
+lib/screens/waiting_room_screen.dart
+lib/services/socket_service.dart
+lib/services/unity_bridge_service.dart
+lib/utils/validators.dart
 pubspec.yaml
 unity/My project/Assets/FlutterUnityIntegration/Editor/Build.cs
 unity/My project/Assets/FlutterUnityIntegration/Editor/SweetShellHelper.cs
@@ -68,100 +84,1259 @@ unity/My project/Assets/Scripts/utils/Billboard.cs
 <files>
 This section contains the contents of the repository's files.
 
-<file path="pubspec.yaml">
-name: block_oni_app
-description: "A new Flutter project."
-# The following line prevents the package from being accidentally published to
-# pub.dev using `flutter pub publish`. This is preferred for private packages.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+<file path="lib/providers/group_provider.dart">
+import 'package:flutter/material.dart';
 
-# The following defines the version and build number for your application.
-# A version number is three numbers separated by dots, like 1.2.43
-# followed by an optional build number separated by a +.
-# Both the version and the builder number may be overridden in flutter
-# build by specifying --build-name and --build-number, respectively.
-# In Android, build-name is used as versionName while build-number used as versionCode.
-# Read more about Android versioning at https://developer.android.com/studio/publish/versioning
-# In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
-# Read more about iOS versioning at
-# https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
-# In Windows, build-name is used as the major, minor, and patch parts
-# of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+// Groupモデル定義
+class Group {
+  final String id;
+  final String name;
+  final String? password;
+  List<String> members;
+  // chatHistoryを削除しました
 
-environment:
-  sdk: ^3.10.1
+  Group({
+    required this.id,
+    required this.name,
+    this.password,
+    required this.members,
+  });
+}
 
-# Dependencies specify other packages that your package needs in order to work.
-# To automatically upgrade your package dependencies to the latest versions
-# consider running `flutter pub upgrade --major-versions`. Alternatively,
-# dependencies can be manually updated by changing the version numbers below to
-# the latest version available on pub.dev. To see which dependencies have newer
-# versions available, run `flutter pub outdated`.
-dependencies:
-  flutter:
-    sdk: flutter
-  flutter_unity_widget:
-    git:
-      url: https://github.com/juicycleff/flutter-unity-view-widget.git
-      ref: master
+class GroupProvider with ChangeNotifier {
+  final List<Group> _groups = [];
+  Group? _currentGroup;
 
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
+  Group? get currentGroup => _currentGroup;
+  List<Group> get allGroups => _groups;
 
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
+  // 1. 新規グループ作成
+  Future<String> createGroup(String groupName, String? password, String playerName) async {
+    // ID生成（簡易的にタイムスタンプなどを使用）
+    final String newId = (1000 + _groups.length).toString();
+    
+    final newGroup = Group(
+      id: newId,
+      name: groupName,
+      password: password,
+      members: [playerName], // 作成者を最初のメンバーに追加
+    );
 
-  # The "flutter_lints" package below contains a set of recommended lints to
-  # encourage good coding practices. The lint set provided by the package is
-  # activated in the `analysis_options.yaml` file located at the root of your
-  # package. See that file for information about deactivating specific lint
-  # rules and activating additional ones.
-  flutter_lints: ^6.0.0
+    _groups.add(newGroup);
+    _currentGroup = newGroup;
+    notifyListeners();
+    return newId;
+  }
 
-# For information on the generic Dart part of this file, see the
-# following page: https://dart.dev/tools/pub/pubspec
+  // 2. グループ参加
+  Future<bool> joinGroup(String groupId, String? inputPass, String playerName) async {
+    try {
+      // IDで検索
+      final group = _groups.firstWhere((g) => g.id == groupId);
 
-# The following section is specific to Flutter packages.
-flutter:
+      // チェック処理
+      if (group.members.length >= 4) return false; // 満員
+      if (group.password != null && group.password!.isNotEmpty) {
+         if (group.password != inputPass) return false; // パス不一致
+      }
 
-  # The following line ensures that the Material Icons font is
-  # included with your application, so that you can use the icons in
-  # the material Icons class.
-  uses-material-design: true
+      // メンバー追加
+      group.members.add(playerName);
+      _currentGroup = group;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      // 見つからない場合など
+      return false;
+    }
+  }
 
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  // 3. グループ退出
+  void leaveGroup(String playerName) {
+    if (_currentGroup != null) {
+      _currentGroup!.members.remove(playerName);
+      if (_currentGroup!.members.isEmpty) {
+        _groups.remove(_currentGroup);
+      }
+      _currentGroup = null;
+      notifyListeners();
+    }
+  }
+}
+</file>
 
-  # An image asset can refer to one or more resolution-specific "variants", see
-  # https://flutter.dev/to/resolution-aware-images
+<file path="lib/providers/lobby_view_model.dart">
+import 'package:flutter/material.dart';
+import 'group_provider.dart';
 
-  # For details regarding adding assets from package dependencies, see
-  # https://flutter.dev/to/asset-from-package
+class LobbyViewModel with ChangeNotifier {
+  List<Group> _searchResults = [];
+  List<Group> get searchResults => _searchResults;
 
-  # To add custom fonts to your application, add a fonts section here,
-  # in this "flutter" section. Each entry in this list should have a
-  # "family" key with the font family name, and a "fonts" key with a
-  # list giving the asset and other descriptors for the font. For
-  # example:
-  # fonts:
-  #   - family: Schyler
-  #     fonts:
-  #       - asset: fonts/Schyler-Regular.ttf
-  #       - asset: fonts/Schyler-Italic.ttf
-  #         style: italic
-  #   - family: Trajan Pro
-  #     fonts:
-  #       - asset: fonts/TrajanPro.ttf
-  #       - asset: fonts/TrajanPro_Bold.ttf
-  #         weight: 700
-  #
-  # For details regarding fonts from package dependencies,
-  # see https://flutter.dev/to/font-from-package
+  // 1. グループ検索 (IDの部分一致)
+  void searchGroup(String keyword, List<Group> allGroups) {
+    if (keyword.isEmpty) {
+      _searchResults = [];
+    } else {
+      _searchResults = allGroups
+          .where((g) => g.id.contains(keyword) || g.name.contains(keyword))
+          .toList();
+    }
+    notifyListeners();
+  }
+}
+</file>
+
+<file path="lib/screens/waiting_room_screen.dart">
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/group_provider.dart';
+import '../providers/user_provider.dart';
+
+class WaitingRoomScreen extends StatelessWidget {
+  const WaitingRoomScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final groupProvider = context.watch<GroupProvider>();
+    final userProvider = context.read<UserProvider>();
+    final group = groupProvider.currentGroup;
+
+    // もしデータが空ならエラー表示（通常ありえないが念のため）
+    if (group == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('エラー')),
+        body: const Center(child: Text('グループが見つかりません')),
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('待機室: ${group.name} (ID: ${group.id})'),
+        backgroundColor: Colors.cyan,
+        foregroundColor: Colors.white,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            // 退出処理
+            groupProvider.leaveGroup(userProvider.username);
+            Navigator.of(context).pop();
+          },
+        ),
+      ),
+      body: Column(
+        children: [
+          const SizedBox(height: 20),
+          const Text(
+            "参加メンバー",
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          
+          // メンバーリスト表示
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.all(16),
+              itemCount: group.members.length,
+              itemBuilder: (context, index) {
+                final memberName = group.members[index];
+                final isMe = memberName == userProvider.username;
+                
+                return Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.person),
+                    title: Text(
+                      memberName,
+                      style: TextStyle(
+                        fontWeight: isMe ? FontWeight.bold : FontWeight.normal,
+                        color: isMe ? Colors.cyan : Colors.black,
+                      ),
+                    ),
+                    trailing: index == 0 ? const Chip(label: Text("ホスト")) : null,
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // ゲーム開始ボタンエリア
+          Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: SizedBox(
+              width: double.infinity,
+              height: 50,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.orangeAccent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onPressed: () {
+                  // ゲーム画面へ遷移
+                  Navigator.pushNamed(context, '/game');
+                },
+                child: const Text(
+                  "ゲーム開始！",
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+</file>
+
+<file path="lib/overlays/global_overlay.dart">
+import 'package:flutter/material.dart';
+import '../main.dart'; // navigatorKeyを使用するため
+
+class GlobalOverlay {
+  static final GlobalOverlay _instance = GlobalOverlay._internal();
+  factory GlobalOverlay() => _instance;
+  GlobalOverlay._internal();
+
+  OverlayEntry? _entry;
+
+  void show({required Widget child}) {
+    if (_entry != null) return; // 既に表示中なら何もしない
+
+    final overlayState = navigatorKey.currentState?.overlay;
+    if (overlayState == null) return;
+
+    _entry = OverlayEntry(
+      builder: (_) => Stack(
+        children: [
+          // 背景タップで閉じるための透明レイヤー
+          Positioned.fill(
+            child: GestureDetector(
+              onTap: hide,
+              child: Container(color: Colors.black54),
+            ),
+          ),
+          // コンテンツ
+          Center(child: child),
+        ],
+      ),
+    );
+
+    overlayState.insert(_entry!);
+  }
+
+  void hide() {
+    _entry?.remove();
+    _entry = null;
+  }
+}
+</file>
+
+<file path="lib/providers/user_provider.dart">
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../services/unity_bridge_service.dart';
+
+/// 担当: ユーザー情報・設定管理クラス
+/// 責務: データの永続化と Unity への同期
+class UserProvider extends ChangeNotifier {
+  final UnityBridgeService _unityBridge;
+  final SharedPreferences _prefs; // 外部から注入されるインスタンス
+
+  // ユーザー状態
+  String _username = '';
+
+  // 設定状態
+  String _quality = '中';
+  bool _soundEnabled = true;
+  bool _vcEnabled = true;
+
+  // コンストラクタで UnityBridge と SharedPreferences の両方を受け取る
+  UserProvider(this._unityBridge, this._prefs) {
+    _loadSettings();
+  }
+
+  // ゲッター
+  String get username => _username;
+  String get quality => _quality;
+  bool get soundEnabled => _soundEnabled;
+  bool get vcEnabled => _vcEnabled;
+
+  /// 初期化時にインスタンス化済みの _prefs から設定を読み込む
+  void _loadSettings() {
+    _username = _prefs.getString('user_name') ?? '';
+    _quality = _prefs.getString('quality') ?? '中';
+    _soundEnabled = _prefs.getBool('sound_enabled') ?? true;
+    _vcEnabled = _prefs.getBool('vc_enabled') ?? true;
+    
+    // 初期化完了を通知
+    notifyListeners();
+  }
+
+  /// ユーザー名の保存処理
+  /// バリデーション: 1~12文字、空白のみ不可、絵文字不可（簡易チェック）
+  Future<bool> saveUsername(String name) async {
+    final trimmedName = name.trim();
+    
+    // バリデーションチェック: 空文字、12文字超過
+    if (trimmedName.isEmpty || trimmedName.length > 12) {
+      return false; 
+    }
+
+    // 絵文字チェック (簡易版: サロゲートペアが含まれるか確認)
+    if (trimmedName.runes.any((rune) => rune > 0xFFFF)) {
+      return false;
+    }
+
+    try {
+      // 既に保持している _prefs を使用
+      await _prefs.setString('user_name', trimmedName);
+      _username = trimmedName;
+
+      // 保存成功後、Unity側に名前情報を送信
+      _unityBridge.sendToUnity("UpdatePlayerName", {"name": trimmedName});
+      
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint("Error saving username: $e");
+      return false;
+    }
+  }
+
+  /// 設定の更新処理
+  Future<void> updateSettings({
+    String? quality,
+    bool? soundEnabled,
+    bool? vcEnabled,
+  }) async {
+    if (quality != null) {
+      _quality = quality;
+      await _prefs.setString('quality', _quality);
+    }
+    if (soundEnabled != null) {
+      _soundEnabled = soundEnabled;
+      await _prefs.setBool('sound_enabled', _soundEnabled);
+    }
+    if (vcEnabled != null) {
+      _vcEnabled = vcEnabled;
+      await _prefs.setBool('vc_enabled', _vcEnabled);
+    }
+
+    // Unity側の設定を更新
+    _unityBridge.sendToUnity("UpdateEngineSettings", {
+      "quality": _quality,
+      "audioVolume": _soundEnabled ? 1.0 : 0.0,
+      "vcActive": _vcEnabled,
+    });
+
+    notifyListeners();
+  }
+}
+</file>
+
+<file path="lib/screens/game_screen.dart">
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:flutter_unity_widget/flutter_unity_widget.dart';
+// プロジェクト構成に合わせてパスを調整してください
+import '../providers/game_rule_manager.dart';
+
+class GameScreen extends StatefulWidget {
+  const GameScreen({Key? key}) : super(key: key);
+
+  @override
+  State<GameScreen> createState() => _GameScreenState();
+}
+
+class _GameScreenState extends State<GameScreen> {
+  UnityWidgetController? _unityWidgetController;
+  final GameRuleManager _ruleManager = GameRuleManager();
+
+  final List<String> _gameLogs = [
+    "システム: ゲームを開始します。",
+    "システム: 10ターン逃げ切れば逃走者の勝ちです。",
+  ];
+
+  final ScrollController _scrollController = ScrollController();
+  bool _isDiceRolled = false;
+
+  @override
+  void dispose() {
+    _unityWidgetController?.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onUnityCreated(controller) {
+    _unityWidgetController = controller;
+  }
+
+  void _onUnityMessage(message) {
+    try {
+      var data = jsonDecode(message.toString());
+
+      if (data['type'] == 'StatusUpdate') {
+        setState(() {
+          _ruleManager.gameStatusMessage = data['message'];
+        });
+        return;
+      }
+
+      String? logMessage = _ruleManager.handleUnityMessage(data);
+      if (logMessage != null) {
+        _addLog(logMessage);
+      }
+      setState(() {});
+
+    } catch (e) {
+      _addLog("Error: $message");
+    }
+  }
+
+  void _addLog(String text) {
+    setState(() {
+      _gameLogs.add(text);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _handleDiceRoll() {
+    if (_isDiceRolled) return;
+
+    _addLog("🎲 ダイスを振っています...");
+    _ruleManager.rollDice(_unityWidgetController);
+
+    setState(() {
+      _isDiceRolled = true;
+    });
+
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _isDiceRolled = false;
+        });
+      }
+    });
+  }
+
+  void _handleUseItem(String itemId, String itemName) {
+    if (_unityWidgetController == null) return;
+    
+    int count = _ruleManager.currentInventory[itemId] ?? 0;
+    
+    if (count <= 0) {
+      _addLog("❌ $itemName を持っていません！");
+      return;
+    }
+
+    _addLog("✨ アイテム使用: $itemName");
+    _ruleManager.useItem(_unityWidgetController, itemId);
+    
+    setState(() {}); 
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('ゲームプレイ'),
+        backgroundColor: const Color(0xFF252525),
+        foregroundColor: Colors.white,
+      ),
+      body: Row(
+        children: [
+          Expanded(
+            flex: 7,
+            child: Container(
+              color: Colors.black,
+              child: UnityWidget(
+                onUnityCreated: _onUnityCreated,
+                onUnityMessage: _onUnityMessage,
+                useAndroidViewSurface: true,
+                fullscreen: false,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Color(0xFF252525),
+                border: Border(left: BorderSide(color: Colors.grey, width: 1)),
+              ),
+              child: Column(
+                children: [
+                  _buildStatusHeader(),
+                  const Divider(color: Colors.grey, height: 1),
+                  Expanded(child: _buildLogView()),
+                  const Divider(color: Colors.grey, height: 1),
+                  _buildExpandableItemArea(),
+                  const Divider(color: Colors.grey, height: 1),
+                  _buildActionArea(),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusHeader() {
+    return Padding(
+      padding: const EdgeInsets.all(12.0),
+      child: Column(
+        children: [
+          const Text("GAME INFO", style: TextStyle(color: Colors.grey, fontSize: 10)),
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              _ruleManager.gameStatusMessage,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLogView() {
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.all(8),
+      itemCount: _gameLogs.length,
+      itemBuilder: (context, index) {
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 4.0),
+          child: Text(
+            _gameLogs[index],
+            style: const TextStyle(color: Colors.white70, fontSize: 12),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildExpandableItemArea() {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        title: const Text("ITEMS", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
+        subtitle: const Text("タップして展開", style: TextStyle(fontSize: 10, color: Colors.grey)),
+        initiallyExpanded: false,
+        children: [
+          Container(
+            height: 100, 
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            color: Colors.black12,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _buildItemButton("SpeedUp", "加速(+2)", Icons.flash_on, Colors.yellow),
+                const SizedBox(width: 8),
+                _buildItemButton("Teleport", "ワープ", Icons.wifi_tethering, Colors.purpleAccent),
+                const SizedBox(width: 8),
+                _buildItemButton("StageRotate", "回転", Icons.rotate_right, Colors.orange),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildItemButton(String id, String name, IconData icon, Color color) {
+    int count = _ruleManager.currentInventory[id] ?? 0;
+    bool hasItem = count > 0;
+
+    return InkWell(
+      onTap: hasItem ? () => _handleUseItem(id, name) : null,
+      child: Container(
+        width: 70, 
+        decoration: BoxDecoration(
+          color: hasItem ? color.withOpacity(0.2) : Colors.black26,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: hasItem ? color : Colors.grey),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: hasItem ? color : Colors.grey, size: 24),
+            const SizedBox(height: 2),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(name, style: TextStyle(color: hasItem ? Colors.white : Colors.grey, fontSize: 10)),
+            ),
+            Text("x$count", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionArea() {
+    return Container(
+      padding: const EdgeInsets.all(12.0),
+      child: SizedBox(
+        width: double.infinity,
+        height: 50,
+        child: ElevatedButton.icon(
+          onPressed: _isDiceRolled ? null : _handleDiceRoll,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blueAccent,
+            foregroundColor: Colors.white,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+          ),
+          icon: const Icon(Icons.casino, size: 24),
+          label: const Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text("ROLL DICE", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+</file>
+
+<file path="lib/screens/lobby_screen.dart">
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/group_provider.dart';
+import '../providers/lobby_view_model.dart';
+import '../providers/user_provider.dart';
+import '../screens/settings_overlay.dart'; // 設定画面
+import '../overlays/global_overlay.dart'; // Overlay管理
+
+class LobbyScreen extends StatefulWidget {
+  const LobbyScreen({super.key});
+
+  @override
+  State<LobbyScreen> createState() => _LobbyScreenState();
+}
+
+class _LobbyScreenState extends State<LobbyScreen> {
+  final TextEditingController _searchCtrl = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    final groupProvider = context.watch<GroupProvider>();
+    final lobbyVM = context.watch<LobbyViewModel>();
+    final userProvider = context.read<UserProvider>();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('ロビー'),
+        backgroundColor: Colors.cyan,
+        foregroundColor: Colors.white,
+        actions: [
+          // 設定ボタン
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              GlobalOverlay().show(child: const SettingsOverlay());
+            },
+          ),
+        ],
+      ),
+      body: Row(
+        children: [
+          // 左側：グループ一覧エリア
+          Expanded(
+            flex: 6,
+            child: Container(
+              color: Colors.grey[100],
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('グループ一覧', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  
+                  // 検索ボックス
+                  TextField(
+                    controller: _searchCtrl,
+                    decoration: InputDecoration(
+                      hintText: 'ID または 部屋名で検索',
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                      filled: true,
+                      fillColor: Colors.white,
+                    ),
+                    onChanged: (val) {
+                      lobbyVM.searchGroup(val, groupProvider.allGroups);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+
+                  // リスト表示
+                  Expanded(
+                    child: _buildGroupList(groupProvider, lobbyVM, userProvider),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // 右側：操作エリア
+          Expanded(
+            flex: 4,
+            child: Container(
+              color: Colors.white,
+              // ★重要: ここをSingleChildScrollViewでラップして、画面が小さくてもオーバーフローさせない
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(24.0),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.sports_esports, size: 80, color: Colors.cyan),
+                      const SizedBox(height: 20),
+                      Text("ようこそ\n${userProvider.username} さん", 
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)
+                      ),
+                      const SizedBox(height: 40), 
+                      
+                      // 新規作成ボタン
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton.icon(
+                          icon: const Icon(Icons.add),
+                          label: const Text('グループ作成'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orangeAccent,
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () => _showCreateDialog(context, groupProvider, userProvider),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      
+                      // 戻るボタン
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('戻る'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGroupList(GroupProvider groupProvider, LobbyViewModel lobbyVM, UserProvider userProvider) {
+    final displayList = _searchCtrl.text.isNotEmpty 
+        ? lobbyVM.searchResults 
+        : groupProvider.allGroups;
+
+    if (displayList.isEmpty) {
+      return const Center(child: Text("グループが見つかりません"));
+    }
+
+    return ListView.builder(
+      itemCount: displayList.length,
+      itemBuilder: (context, index) {
+        final group = displayList[index];
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          child: ListTile(
+            title: Text(group.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text("ID: ${group.id} / 参加: ${group.members.length}人"),
+            trailing: ElevatedButton(
+              child: const Text("参加"),
+              onPressed: () async {
+                String? inputPass;
+                if (group.password != null && group.password!.isNotEmpty) {
+                  inputPass = await _showPasswordInputDialog(context);
+                  if (inputPass == null) return;
+                }
+
+                if (!mounted) return;
+                bool success = await groupProvider.joinGroup(group.id, inputPass, userProvider.username);
+                
+                if (success && mounted) {
+                   Navigator.pushNamed(context, '/waiting');
+                } else if (mounted) {
+                   ScaffoldMessenger.of(context).showSnackBar(
+                     const SnackBar(content: Text("参加できませんでした")),
+                   );
+                }
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showCreateDialog(BuildContext context, GroupProvider groupProvider, UserProvider userProvider) {
+    final nameCtrl = TextEditingController();
+    final passCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('新規グループ作成'),
+        // ★重要: ダイアログの中身もスクロール可能にして、キーボード表示時のオーバーフローを防ぐ
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl, 
+                decoration: const InputDecoration(labelText: 'グループ名'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: passCtrl, 
+                decoration: const InputDecoration(labelText: 'パスワード(任意)'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('キャンセル'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (nameCtrl.text.isEmpty) return;
+              await groupProvider.createGroup(nameCtrl.text, passCtrl.text, userProvider.username);
+              if (!mounted) return;
+              Navigator.pop(ctx);
+              Navigator.pushNamed(context, '/waiting');
+            },
+            child: const Text('作成'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<String?> _showPasswordInputDialog(BuildContext context) async {
+    String? result;
+    final ctrl = TextEditingController();
+    await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('パスワード入力'),
+        content: TextField(
+          controller: ctrl, 
+          obscureText: true, 
+          decoration: const InputDecoration(hintText: 'パスワードを入力'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('キャンセル')),
+          ElevatedButton(
+            onPressed: () { result = ctrl.text; Navigator.pop(context); }, 
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    return result;
+  }
+}
+</file>
+
+<file path="lib/screens/settings_overlay.dart">
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/user_provider.dart';
+import '../overlays/global_overlay.dart';
+
+class SettingsOverlay extends StatelessWidget {
+  const SettingsOverlay({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final userProv = context.watch<UserProvider>();
+
+    return Material(
+      color: Colors.transparent,
+      child: Center(
+        child: Container(
+          width: 320,
+          // 画面の高さ80%を上限とし、それ以上はスクロールさせる設定
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.8,
+          ),
+          margin: const EdgeInsets.symmetric(vertical: 20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black26,
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          // ★修正点: ClipRRectとSingleChildScrollViewでラップしてOverflowを防止
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(20),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        '設定',
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => GlobalOverlay().hide(),
+                      ),
+                    ],
+                  ),
+                  const Divider(),
+                  const SizedBox(height: 16),
+
+                  // 画質設定
+                  const Text('画質設定', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: ['低', '中', '高'].map((label) {
+                      final isSelected = userProv.quality == label;
+                      return ChoiceChip(
+                        label: Text(label),
+                        selected: isSelected,
+                        selectedColor: Colors.cyanAccent,
+                        onSelected: (selected) {
+                          if (selected) {
+                            userProv.updateSettings(quality: label);
+                          }
+                        },
+                      );
+                    }).toList(),
+                  ),
+
+                  const SizedBox(height: 24),
+
+                  // サウンド設定
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('サウンド (BGM/SE)', style: TextStyle(fontWeight: FontWeight.bold)),
+                    value: userProv.soundEnabled,
+                    activeColor: Colors.cyan,
+                    onChanged: (v) => userProv.updateSettings(soundEnabled: v),
+                  ),
+
+                  // ボイスチャット設定
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('ボイスチャット', style: TextStyle(fontWeight: FontWeight.bold)),
+                    value: userProv.vcEnabled,
+                    activeColor: Colors.cyan,
+                    onChanged: (v) => userProv.updateSettings(vcEnabled: v),
+                  ),
+
+                  const SizedBox(height: 24),
+                  
+                  // 閉じるボタン
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton(
+                      onPressed: () => GlobalOverlay().hide(),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.grey.shade200,
+                        foregroundColor: Colors.black,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      child: const Text('閉じる', style: TextStyle(fontSize: 16)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+</file>
+
+<file path="lib/screens/title_screen.dart">
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/user_provider.dart';
+import '../overlays/global_overlay.dart'; // 設定画面表示用
+import '../screens/settings_overlay.dart'; // 設定画面の中身
+
+class TitleScreen extends StatefulWidget {
+  const TitleScreen({super.key});
+
+  @override
+  State<TitleScreen> createState() => _TitleScreenState();
+}
+
+class _TitleScreenState extends State<TitleScreen> {
+  final TextEditingController _nameController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // 画面描画後に保存された名前をセット
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final userProvider = context.read<UserProvider>();
+      _nameController.text = userProvider.username;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      // Stackを使って右上に設定ボタンを配置できるようにする
+      body: SafeArea(
+        child: Stack(
+          children: [
+            // --- メインコンテンツ ---
+            Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // タイトルロゴ
+                    const Icon(Icons.directions_run, size: 100, color: Colors.cyan),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'ブロックおに',
+                      style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.cyan),
+                    ),
+                    const SizedBox(height: 40),
+
+                    // 名前入力
+                    SizedBox(
+                      width: 300,
+                      child: TextField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'プレイヤー名',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.person),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // スタートボタン
+                    SizedBox(
+                      width: 200,
+                      height: 50,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.orangeAccent,
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: () async {
+                          final name = _nameController.text;
+                          if (name.isEmpty) return;
+
+                          // 名前を保存
+                          final success = await context.read<UserProvider>().saveUsername(name);
+                          
+                          if (success && mounted) {
+                            Navigator.pushNamed(context, '/lobby');
+                          }
+                        },
+                        child: const Text('スタート', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // --- ★追加: 設定ボタン（右上） ---
+            Positioned(
+              top: 10,
+              right: 10,
+              child: IconButton(
+                icon: const Icon(Icons.settings, size: 30, color: Colors.grey),
+                onPressed: () {
+                  // 設定オーバーレイを表示
+                  GlobalOverlay().show(child: const SettingsOverlay());
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+</file>
+
+<file path="lib/services/socket_service.dart">
+import 'dart:async';
+import 'package:socket_io_client/socket_io_client.dart' as io;
+
+/// 責務: Socket.ioの接続管理、イベント送受信のラップ [cite: 43-44]
+class SocketService {
+  // シングルトンパターン（アプリ内で1つだけインスタンスを作る）
+  static final SocketService _instance = SocketService._internal();
+  factory SocketService() => _instance;
+  SocketService._internal();
+
+  io.Socket? _socket;
+
+  /// ソケット接続の確立 [cite: 45]
+  void init(String url) {
+    _socket = io.io(url, io.OptionBuilder()
+      .setTransports(['websocket']) // WebSocketのみ使用
+      .disableAutoConnect()
+      .build());
+
+    _socket?.onConnect((_) => print('Connected to Server'));
+    _socket?.onDisconnect((_) => print('Disconnected from Server'));
+    _socket?.onConnectError((data) => print('Connect Error: $data'));
+    
+    _socket?.connect();
+  }
+
+  /// サーバーへイベント送信し、応答(Ack)を待機する [cite: 45]
+  Future<dynamic> emitWithAck(String event, dynamic data) async {
+    if (_socket == null || !_socket!.connected) {
+      throw Exception('Socket is not connected');
+    }
+
+    final completer = Completer<dynamic>();
+
+    // サーバーへ送信
+    _socket!.emitWithAck(event, data, ack: (response) {
+      if (!completer.isCompleted) {
+        completer.complete(response);
+      }
+    });
+
+    // 5秒でタイムアウト [cite: 46]
+    return completer.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => throw TimeoutException('Server response timed out: $event'),
+    );
+  }
+
+  // Ackを待たない通常の送信
+  void emit(String event, dynamic data) {
+    _socket?.emit(event, data);
+  }
+
+  // イベント受信リスナーの登録
+  void on(String event, Function(dynamic) handler) {
+    _socket?.on(event, handler);
+  }
+}
+</file>
+
+<file path="lib/services/unity_bridge_service.dart">
+import 'dart:convert';
+import 'package:flutter_unity_widget/flutter_unity_widget.dart';
+
+/// 責務: Flutter と Unity 間の低レイヤー通信を抽象化 [cite: 53-54]
+class UnityBridgeService {
+  UnityWidgetController? _unityWidgetController;
+
+  // Unityウィジェットが生成されたらコントローラーをセットする
+  void setController(UnityWidgetController controller) {
+    _unityWidgetController = controller;
+  }
+
+  /// Flutter -> Unity: メッセージ送信 [cite: 55]
+  void sendToUnity(String method, Map<String, dynamic> args) {
+    // 設計書の通信フォーマット案に基づくJSON作成 [cite: 61-68]
+    final String message = jsonEncode({
+      "api": "FlutterToUnity",
+      "method": method,
+      "parameters": args,
+    });
+
+    // Unity側の 'UnityReceiverObject' というオブジェクトの 'OnMessageFromFlutter' メソッドを呼ぶ
+    _unityWidgetController?.postMessage(
+      'UnityReceiverObject', 
+      'OnMessageFromFlutter',
+      message,
+    );
+  }
+
+  /// Unity -> Flutter: メッセージ受信処理 [cite: 57]
+  void onMessageFromUnity(dynamic message) {
+    try {
+      final Map<String, dynamic> data = jsonDecode(message.toString());
+      final String type = data['type'] ?? '';
+
+      // 必要に応じてProviderのメソッドを呼び出す処理をここに記述
+      print("Received from Unity: $type");
+      
+    } catch (e) {
+      print("Unity Message Parse Error: $e");
+    }
+  }
+}
+</file>
+
+<file path="lib/utils/validators.dart">
+class Validators {
+  static bool isValidUserName(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return false;
+    if (trimmed.length > 12) return false;
+
+    // 絵文字を弾く（サロゲートペア検出）
+    final emojiRegex = RegExp(
+      r'[\u{1F300}-\u{1FAFF}]',
+      unicode: true,
+    );
+    if (emojiRegex.hasMatch(trimmed)) return false;
+
+    return true;
+  }
+
+  static bool isValidPassword(String password) {
+    return password.length >= 4 && password.length <= 8;
+  }
+
+  static bool isValidChat(String text) {
+    return text.length <= 140;
+  }
+}
 </file>
 
 <file path="unity/My project/Assets/FlutterUnityIntegration/Editor/Build.cs">
@@ -1863,6 +3038,57 @@ public class Billboard : MonoBehaviour
 }
 </file>
 
+<file path="pubspec.yaml">
+name: block_oni_app
+description: "Block Oni - Flutter × Unity Board Game"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # =========================
+  # 状態管理
+  # =========================
+  provider: ^6.1.2
+
+  # =========================
+  # 永続化
+  # =========================
+  shared_preferences: ^2.2.2
+
+  # =========================
+  # Socket通信
+  # =========================
+  socket_io_client: ^2.0.3+1
+
+  # =========================
+  # Unity連携（Desktop / Android / iOS）
+  # ※ Web非対応
+  # =========================
+  flutter_unity_widget:
+    git:
+      url: https://github.com/juicycleff/flutter-unity-view-widget.git
+      ref: master
+
+  # UI Icons
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+</file>
+
 <file path="unity/My project/Assets/Scripts/Game/CameraController.cs">
 using UnityEngine;
 
@@ -1935,13 +3161,229 @@ public class CameraController : MonoBehaviour
 }
 </file>
 
+<file path="lib/models/game_data.dart">
+// Unityと合わせるため Vector2Int を廃止し、ID文字列ベースに変更
+class Player {
+  final String playerId;
+  final String role; // "Oni" or "Runner"
+  
+  // UnityのマスID (例: "Top_2_2")
+  String currentSquareId = "";
+  
+  bool hasActedThisTurn = false;
+  Map<String, int> inventory = {};
+  
+  // アイテム効果などで使うパラメータ
+  int diceBonus = 0;
+
+  Player({
+    required this.playerId,
+    required this.role,
+    this.currentSquareId = "",
+  });
+
+  // JSONなどから生成する場合のファクトリなどがあればここに追加
+}
+
+class ItemDefinition {
+  final String itemId;
+  final String itemName;
+  final String effectType; // "Teleport", "StageRotate", etc.
+  final bool isUsableByRunner;
+  final int maxStack = 5;
+
+  ItemDefinition({
+    required this.itemId,
+    required this.itemName,
+    required this.effectType,
+    required this.isUsableByRunner
+  });
+}
+</file>
+
+<file path="lib/models/item.dart">
+// 効果種別の定義
+enum ItemEffectType {
+  AddDiceValue,      // ダイス目加算
+  BlockCell,         // マス通行不可
+  DiceFixed,         // ダイス目固定
+  DiceRange,         // ダイス目範囲固定
+  MovementOverride,  // 鬼の移動制限解除
+  Teleport,          // テレポート
+  StageRotate        // ステージ回転
+}
+
+// アイテム定義クラス
+class Item {
+  final String itemId;
+  final String itemName;
+  final ItemEffectType effectType;
+  final bool isUsableByRunner;
+  final String description;
+  final int maxStack = 5; // 最大所持数
+
+  Item({
+    required this.itemId,
+    required this.itemName,
+    required this.effectType,
+    required this.isUsableByRunner,
+    required this.description,
+  });
+}
+</file>
+
+<file path="lib/models/player.dart">
+// 座標管理用クラス (Vector2Int)
+class Vector2Int {
+  int x, y;
+  Vector2Int(this.x, this.y);
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Vector2Int && x == other.x && y == other.y;
+
+  @override
+  int get hashCode => x.hashCode ^ y.hashCode;
+}
+
+// 役割定義
+enum PlayerRole { Oni, Runner }
+
+// プレイヤー定義
+class Player {
+  final int playerId;
+  final PlayerRole role;
+  Vector2Int position;
+  bool hasActedThisTurn = false;
+  Map<String, int> inventory = {}; // <itemId, 所持数>
+
+  // 鬼の進行方向（LockOniDirection用）
+  Vector2Int? lockedDirection; 
+
+  // ▼▼ 追加が必要だった変数たち ▼▼
+  int diceModifier = 0; // ダイスの目の補正値
+  bool isMovementOverridden = false; // 移動制限解除フラグ
+  // ▲▲ ここまで ▲▲
+
+  Player({
+    required this.playerId,
+    required this.role,
+    required this.position,
+  });
+}
+</file>
+
+<file path="lib/providers/game_rule_manager.dart">
+import 'dart:convert';
+import 'package:flutter_unity_widget/flutter_unity_widget.dart';
+import '../models/game_data.dart';
+
+class GameRuleManager {
+  int currentTurn = 1;
+  int maxTurn = 10;
+  String currentPlayerId = "Runner"; // 初期プレイヤー
+  String gameStatusMessage = "ゲーム開始待機中";
+  bool hasRolledThisTurn = false;
+
+  // ★修正: プレイヤーごとのインベントリ管理
+  // Map<PlayerID, Map<ItemID, Count>>
+  Map<String, Map<String, int>> allPlayerInventories = {
+    "Runner": {},
+    "Oni1": {},
+    "Oni2": {},
+    "Oni3": {},
+  };
+
+  // 現在のプレイヤーの在庫を取得するヘルパー
+  Map<String, int> get currentInventory => allPlayerInventories[currentPlayerId] ?? {};
+
+  void sendToUnity(UnityWidgetController? controller, String type, Map<String, dynamic> data) {
+    if (controller == null) return;
+    data['type'] = type;
+    controller.postMessage(
+      'GameManager',
+      'OnReceiveFlutterMessage',
+      jsonEncode(data),
+    );
+  }
+
+  void rollDice(UnityWidgetController? controller) {
+    if (hasRolledThisTurn) return; 
+
+    int result = DateTime.now().millisecond % 6 + 1; 
+    sendToUnity(controller, "DiceRolled", {"result": result.toString()});
+    hasRolledThisTurn = true;
+  }
+
+  void useItem(UnityWidgetController? controller, String itemId) {
+    // 現在のプレイヤーの所持数をチェック
+    int count = currentInventory[itemId] ?? 0;
+    if (count <= 0) {
+      return; 
+    }
+    
+    // Unityへ使用リクエスト
+    sendToUnity(controller, "UseItem", {"itemId": itemId});
+    
+    // UI上ですぐ減らす（Unity側で却下される可能性もあるが、基本は信頼する）
+    // もし厳密にするならUnityからの成功通知を待つべきだが、今回は簡易実装
+    currentInventory[itemId] = count - 1;
+  }
+
+  String? handleUnityMessage(Map<String, dynamic> data) {
+    switch (data['type']) {
+      case 'UnityReady':
+        return "System: Unity Connected.";
+
+      case 'TurnChange':
+        hasRolledThisTurn = false; 
+        currentPlayerId = data['playerId']; // 手番プレイヤー更新
+        return "Turn changed to $currentPlayerId";
+
+      case 'StatusUpdate':
+        return null;
+
+      case 'DiceCalculated':
+        String baseVal = data['base'];
+        String bonusVal = data['bonus'];
+        String totalVal = data['total'];
+        if (int.parse(bonusVal) > 0) {
+          return "🎲 出目[$baseVal] + アイテム[$bonusVal] = 【$totalValマス】進みます！";
+        } else {
+          return "🎲 出目[$baseVal] = 【$totalValマス】進みます！";
+        }
+
+      // ★追加: アイテム拾得通知の処理
+      case 'ItemPickup':
+        String pId = data['playerId'];
+        String itemId = data['itemId'];
+        
+        if (!allPlayerInventories.containsKey(pId)) {
+          allPlayerInventories[pId] = {};
+        }
+        allPlayerInventories[pId]![itemId] = (allPlayerInventories[pId]![itemId] ?? 0) + 1;
+        
+        return "✨ $pId が $itemId を獲得しました！";
+
+      case 'GameEnd':
+        gameStatusMessage = data['result'];
+        hasRolledThisTurn = true; 
+        return "🏁 ゲーム終了: ${data['result']}";
+
+      default:
+        return null;
+    }
+  }
+}
+</file>
+
 <file path="unity/My project/Assets/Scripts/Game/MoveCalculator.cs">
 using UnityEngine;
 using System.Collections.Generic;
 
 public static class MoveCalculator
 {
-    // 「今すぐ隣へ移動できる候補」を返す
     public static List<string> GetImmediateCandidates(PlayerController player)
     {
         List<string> candidates = new List<string>();
@@ -1949,412 +3391,78 @@ public static class MoveCalculator
         if (!MapGenerator.AllSquares.ContainsKey(player.CurrentSquareId)) return candidates;
         Square currentSq = MapGenerator.AllSquares[player.CurrentSquareId];
 
+        bool isRestrictedStraight = false;
+        Square lastSq = null;
+
+        // 鬼の直進縛りは「移動中」かつ「前回位置がある」場合のみ
+        if (player.Role == "Oni" && player.RemainingSteps < player.TotalStepsInTurn)
+        {
+            if (!string.IsNullOrEmpty(player.LastSquareId) && MapGenerator.AllSquares.ContainsKey(player.LastSquareId))
+            {
+                lastSq = MapGenerator.AllSquares[player.LastSquareId];
+                isRestrictedStraight = true;
+            }
+        }
+
         foreach (string neighborId in currentSq.ConnectedIds)
         {
-            // 1. Uターン禁止
             if (neighborId == player.LastSquareId) continue;
 
             Square neighborSq = MapGenerator.AllSquares[neighborId];
 
-            // 2. 役割ごとの移動制限
+            // 底面への移動禁止
+            if (Vector3.Dot(neighborSq.transform.up, Vector3.down) > 0.9f) continue;
+
             if (player.Role == "Oni")
             {
-                // 【修正】距離チェック + 「軸共有チェック」で厳密に十字のみ許可する
-                
-                // A. 距離チェック (従来通り)
-                float dist = Vector3.Distance(currentSq.transform.position, neighborSq.transform.position);
-                if (dist > 1.2f) continue; // 平面の斜め(1.41)を弾く
+                if (!IsStraightMove(currentSq, neighborSq)) continue;
 
-                // B. ★追加: 軸共有チェック (角の斜め移動を弾く)
-                // 十字移動(面またぎ含む)なら、X, Y, Z のうち少なくとも1つは
-                // ほぼ同じ値になるはずである。
-                // (例: TopからFrontへ降りる時、X座標は変わらない)
-                // 逆に、X, Y, Z 全てが大きく変わっているなら、それは「角の斜め向こう」への移動である。
-
-                Vector3 p1 = currentSq.transform.position;
-                Vector3 p2 = neighborSq.transform.position;
-                float diffX = Mathf.Abs(p1.x - p2.x);
-                float diffY = Mathf.Abs(p1.y - p2.y);
-                float diffZ = Mathf.Abs(p1.z - p2.z);
-
-                // 許容誤差
-                float epsilon = 0.1f;
-
-                // 「どれか1つの軸が一致しているか？」
-                bool sharesAxis = (diffX < epsilon) || (diffY < epsilon) || (diffZ < epsilon);
-
-                if (!sharesAxis)
+                if (isRestrictedStraight && lastSq != null)
                 {
-                    // 全軸がズレている = 立体的な斜め移動なのでNG
-                    continue;
+                    if (!IsContinuousStraight(lastSq, currentSq, neighborSq)) continue;
                 }
             }
             
-            // 逃走者は制限なし
-
             candidates.Add(neighborId);
         }
 
         return candidates;
     }
-}
-</file>
 
-<file path="unity/My project/Assets/Scripts/Game/Square.cs">
-using UnityEngine;
-using System.Collections.Generic;
-
-public enum ItemType { None, SpeedUp, Block }
-
-public class Square : MonoBehaviour
-{
-    [Header("基本情報")]
-    public string ID; 
-    public string FaceName; 
-    public Vector2Int LocalCoordinates; 
-
-    public Vector3 CurrentNormal => transform.up;
-    public Vector3 UpVector => transform.up;
-
-    [Header("状態")]
-    public bool IsBlocked = false; 
-    public ItemType CurrentItem = ItemType.None;
-    
-    private GameObject itemVisual; 
-    public List<string> ConnectedIds = new List<string>();
-
-    public void SetupNormal() { }
-
-    public void SetHighlight(bool isActive)
+    private static bool IsStraightMove(Square a, Square b)
     {
-        var r = GetComponent<Renderer>();
-        if (r != null) r.material.color = isActive ? Color.yellow : Color.white;
+        float dist = Vector3.Distance(a.transform.position, b.transform.position);
+        if (dist > 1.2f) return false;
+
+        Vector3 p1 = a.transform.position;
+        Vector3 p2 = b.transform.position;
+        int diffCount = 0;
+        float epsilon = 0.1f;
+        if (Mathf.Abs(p1.x - p2.x) > epsilon) diffCount++;
+        if (Mathf.Abs(p1.y - p2.y) > epsilon) diffCount++;
+        if (Mathf.Abs(p1.z - p2.z) > epsilon) diffCount++;
+
+        return diffCount <= 2;
     }
 
-    public void SpawnItem(ItemType type, GameObject prefab)
+    private static bool IsContinuousStraight(Square last, Square current, Square next)
     {
-        if (CurrentItem != ItemType.None) return;
-        CurrentItem = type;
-        if (prefab != null)
+        Vector3 v1 = (current.transform.position - last.transform.position).normalized;
+        Vector3 v2 = (next.transform.position - current.transform.position).normalized;
+        float dot = Vector3.Dot(v1, v2);
+
+        if (dot > 0.9f) return true;
+
+        float distLastToNext = Vector3.Distance(last.transform.position, next.transform.position);
+        bool isFaceChange = (last.FaceName != current.FaceName) || (current.FaceName != next.FaceName);
+
+        if (isFaceChange)
         {
-            // アイテム生成
-            itemVisual = Instantiate(prefab, transform.position + CurrentNormal * 0.5f, Quaternion.identity);
-            itemVisual.transform.parent = this.transform;
-            itemVisual.transform.localRotation = Quaternion.identity;
-
-            // ★修正: 親(パネル)がつぶれている分、子(アイテム)を引き伸ばして補正する
-            // パネルのScaleは (1.0, 0.1, 1.0)
-            // そのため、Y方向に 1/0.1 = 10倍 の補正をかけないと球体にならない
-            
-            // アイテム自体の見た目のサイズを 0.5 くらいにしたい場合
-            // X: 0.5 / 1.0 = 0.5
-            // Y: 0.5 / 0.1 = 5.0  <-- ここ重要
-            // Z: 0.5 / 1.0 = 0.5
-            itemVisual.transform.localScale = new Vector3(0.5f, 5.0f, 0.5f);
-        }
-    }
-
-    public void RemoveItem()
-    {
-        CurrentItem = ItemType.None;
-        if (itemVisual != null)
-        {
-            Destroy(itemVisual);
-            itemVisual = null;
-        }
-    }
-}
-</file>
-
-<file path="lib/main.dart">
-import 'dart:convert';
-import 'dart:math';
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_unity_widget/flutter_unity_widget.dart';
-
-void main() {
-  runApp(const MyApp());
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Block Oni',
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF1E1E1E), // 暗めの背景
-        primaryColor: Colors.redAccent,
-      ),
-      home: const GamePage(),
-    );
-  }
-}
-
-class GamePage extends StatefulWidget {
-  const GamePage({Key? key}) : super(key: key);
-
-  @override
-  State<GamePage> createState() => _GamePageState();
-}
-
-class _GamePageState extends State<GamePage> {
-  UnityWidgetController? _unityWidgetController;
-  
-  // ゲームログ用のリスト
-  final List<String> _gameLogs = [
-    "システム: ゲームを開始します。",
-    "システム: 鬼のターンです。",
-  ];
-
-  final ScrollController _scrollController = ScrollController();
-  
-  // 現在のプレイヤー状態（仮）
-  String _currentPlayer = "Oni1";
-  bool _isDiceRolled = false;
-
-  @override
-  void dispose() {
-    _unityWidgetController?.dispose();
-    _scrollController.dispose();
-    super.dispose();
-  }
-
-  // --- Unityとの連携部分 ---
-
-  void _onUnityCreated(controller) {
-    _unityWidgetController = controller;
-    // 必要なら初期化メッセージを送る
-    // _sendMessageToUnity("Init", "");
-  }
-
-  void _onUnityMessage(message) {
-      try {
-        var data = jsonDecode(message.toString());
-        
-        // ★追加: Unityから計算結果が届いたら詳細ログを出す
-        if (data['type'] == 'DiceCalculated') {
-          String baseVal = data['base'];
-          String bonusVal = data['bonus'];
-          String totalVal = data['total'];
-          
-          // アイテムボーナスがある場合とない場合でメッセージを変えると親切
-          if (int.parse(bonusVal) > 0) {
-            _addLog("🎲 出目[$baseVal] + アイテム[$bonusVal] = 【$totalValマス】進みます！");
-          } else {
-            _addLog("🎲 出目[$baseVal] = 【$totalValマス】進みます！");
-          }
-          return; // これ以上処理しない
+            if (distLastToNext > 1.3f) return true;
         }
 
-      // その他のメッセージ
-      _addLog("Unity: $message");
-    } catch (e) {
-      _addLog("Unity(raw): $message");
+        return false;
     }
-  }
-
-  // UnityへJSONメッセージを送る関数
-  void _sendMessageToUnity(String type, Map<String, dynamic> data) {
-    if (_unityWidgetController != null) {
-      data['type'] = type;
-      String jsonStr = jsonEncode(data);
-      _unityWidgetController!.postMessage(
-        'GameManager', // Unity側のGameObject名
-        'OnReceiveFlutterMessage', // メソッド名
-        jsonStr, // 引数(JSON文字列)
-      );
-    }
-  }
-
-  // --- UIロジック ---
-
-  void _addLog(String text) {
-    setState(() {
-      _gameLogs.add(text);
-    });
-    // ログ自動スクロール
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
-      }
-    });
-  }
-
-void _handleDiceRoll() {
-    if (_isDiceRolled) return;
-
-    int result = Random().nextInt(6) + 1;
-    
-    // ★修正: ここでは確定メッセージを出さず、送信したことだけ記録する（または何も出さない）
-    // _addLog("🎲 ダイスを振りました: 結果 [$result]"); // ←これは削除またはコメントアウト
-    _addLog("🎲 ダイスを振っています..."); // ←これに変更
-
-    _sendMessageToUnity("DiceRolled", {"result": result.toString()});
-
-    setState(() {
-      _isDiceRolled = true;
-    });
-
-    // テスト用リセット（3秒後）
-    Future.delayed(const Duration(seconds: 3), () {
-      if (mounted) {
-        setState(() {
-          _isDiceRolled = false;
-        });
-      }
-    });
-  }
-
-  // --- 画面構築 ---
-
-  @override
-  Widget build(BuildContext context) {
-    // 横画面レイアウト
-    return Scaffold(
-      body: Row(
-        children: [
-          // 左側: Unity画面 (画面の70%)
-          Expanded(
-            flex: 7,
-            child: Container(
-              color: Colors.black,
-              child: UnityWidget(
-                onUnityCreated: _onUnityCreated,
-                onUnityMessage: _onUnityMessage,
-                useAndroidViewSurface: true, // Androidで安定させる設定
-                fullscreen: false,
-              ),
-            ),
-          ),
-          
-          // 右側: UIパネル (画面の30%)
-          Expanded(
-            flex: 3,
-            child: Container(
-              decoration: const BoxDecoration(
-                color: Color(0xFF252525),
-                border: Border(left: BorderSide(color: Colors.grey, width: 1)),
-              ),
-              child: Column(
-                children: [
-                  // 1. ヘッダー (プレイヤー情報)
-                  _buildStatusHeader(),
-                  const Divider(color: Colors.grey),
-
-                  // 2. ログ表示エリア (スクロール可能)
-                  Expanded(
-                    child: _buildLogView(),
-                  ),
-                  const Divider(color: Colors.grey),
-
-                  // 3. アクションエリア (ボタンなど)
-                  _buildActionArea(),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatusHeader() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        children: [
-          const Text(
-            "CURRENT TURN",
-            style: TextStyle(color: Colors.grey, fontSize: 12),
-          ),
-          const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 24),
-            decoration: BoxDecoration(
-              color: Colors.redAccent.withOpacity(0.2),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.redAccent),
-            ),
-            child: Text(
-              _currentPlayer,
-              style: const TextStyle(
-                color: Colors.redAccent,
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLogView() {
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.all(12),
-      itemCount: _gameLogs.length,
-      itemBuilder: (context, index) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8.0),
-          child: Text(
-            _gameLogs[index],
-            style: const TextStyle(color: Colors.white70, fontSize: 13),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildActionArea() {
-    return Container(
-      padding: const EdgeInsets.all(16.0),
-      color: const Color(0xFF1E1E1E),
-      child: Column(
-        children: [
-          // ダイスボタン
-          SizedBox(
-            width: double.infinity,
-            height: 60,
-            child: ElevatedButton.icon(
-              onPressed: _isDiceRolled ? null : _handleDiceRoll,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blueAccent,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 5,
-              ),
-              icon: const Icon(Icons.casino, size: 28),
-              label: const Text(
-                "ROLL DICE",
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          // その他のボタン例
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              IconButton(onPressed: () {}, icon: const Icon(Icons.settings, color: Colors.grey)),
-              IconButton(onPressed: () {}, icon: const Icon(Icons.chat, color: Colors.grey)),
-              IconButton(onPressed: () {}, icon: const Icon(Icons.help_outline, color: Colors.grey)),
-            ],
-          )
-        ],
-      ),
-    );
-  }
 }
 </file>
 
@@ -2546,25 +3654,117 @@ public class MapGenerator : MonoBehaviour
 }
 </file>
 
+<file path="unity/My project/Assets/Scripts/Game/Square.cs">
+using UnityEngine;
+using System.Collections.Generic;
+
+// ★修正: AddDiceValueを削除し、3種類(SpeedUp, Teleport, StageRotate) + Block/None に整理
+public enum ItemType { None, SpeedUp, Block, Teleport, StageRotate }
+
+public class Square : MonoBehaviour
+{
+    [Header("基本情報")]
+    public string ID; 
+    public string FaceName; 
+    public Vector2Int LocalCoordinates; 
+
+    public Vector3 CurrentNormal => transform.up;
+    public Vector3 UpVector => transform.up;
+
+    [Header("状態")]
+    public bool IsBlocked = false; 
+    public ItemType CurrentItem = ItemType.None;
+    
+    private GameObject itemVisual; 
+    public List<string> ConnectedIds = new List<string>();
+
+    public void SetupNormal() { }
+
+    public void SetHighlight(bool isActive)
+    {
+        var r = GetComponent<Renderer>();
+        if (r != null) r.material.color = isActive ? Color.yellow : Color.white;
+    }
+
+    public void SpawnItem(ItemType type, GameObject prefab)
+    {
+        if (CurrentItem != ItemType.None) return;
+        CurrentItem = type;
+        if (prefab != null)
+        {
+            // アイテム生成
+            itemVisual = Instantiate(prefab, transform.position + CurrentNormal * 0.5f, Quaternion.identity);
+            itemVisual.transform.parent = this.transform;
+            itemVisual.transform.localRotation = Quaternion.identity;
+
+            // サイズ補正
+            itemVisual.transform.localScale = new Vector3(0.5f, 5.0f, 0.5f);
+
+            // ★修正: 色分け処理 (AddDiceValue削除)
+            Renderer r = itemVisual.GetComponent<Renderer>();
+            if (r != null)
+            {
+                switch (type)
+                {
+                    case ItemType.SpeedUp:
+                        r.material.color = Color.yellow; // 黄色
+                        break;
+                    case ItemType.Teleport:
+                        r.material.color = Color.magenta; // 紫
+                        break;
+                    case ItemType.StageRotate:
+                        r.material.color = new Color(1f, 0.5f, 0f); // オレンジ
+                        break;
+                    default:
+                        r.material.color = Color.white;
+                        break;
+                }
+            }
+        }
+    }
+
+    public void RemoveItem()
+    {
+        CurrentItem = ItemType.None;
+        if (itemVisual != null)
+        {
+            Destroy(itemVisual);
+            itemVisual = null;
+        }
+    }
+}
+</file>
+
 <file path="unity/My project/Assets/Scripts/Game/PlayerController.cs">
 using UnityEngine;
 using DG.Tweening; 
 using UnityEngine.UI;
 using System.Collections.Generic;
+using FlutterUnityIntegration; // 追加
 
 public class PlayerController : MonoBehaviour
 {
     public string PlayerId;
     public string Role;
     public string CurrentSquareId;
-    public string LastSquareId;       
+    public string LastSquareId;        
     public int RemainingSteps;        
     public int DiceBonus = 0;
+    public int TotalStepsInTurn = 0;
+
+    // ★追加: 元のスケールを保持
+    private Vector3 originalScale;
 
     [Header("見た目・UI")]
     public Renderer meshRenderer; 
     public Text nameText; 
     public List<ItemType> OwnedItems = new List<ItemType>();
+
+    void Start()
+    {
+        // ★追加: 開始時のスケールを保存
+        originalScale = transform.localScale;
+    }
 
     public void Setup(string id, string role, string startSquareId)
     {
@@ -2574,6 +3774,7 @@ public class PlayerController : MonoBehaviour
         this.LastSquareId = ""; 
         this.RemainingSteps = 0;
         this.DiceBonus = 0;
+        this.TotalStepsInTurn = 0;
 
         if (nameText != null)
         {
@@ -2604,7 +3805,6 @@ public class PlayerController : MonoBehaviour
         Vector3 targetPos = nextSq.transform.position;
         Vector3 normal = nextSq.UpVector;
 
-        // ★高さ調整: パネル中心から0.6浮かす（表面に乗る）
         float heightOffset = 0.6f; 
         Vector3 goal = targetPos + normal * heightOffset;
 
@@ -2623,15 +3823,27 @@ public class PlayerController : MonoBehaviour
             });
     }
 
-    public void MoveToSquare(string nextSquareId, Vector3 targetPos)
+    public void ForceMoveTo(string targetSquareId, System.Action onComplete)
     {
-        Square nextSq = MapGenerator.AllSquares[nextSquareId];
+        if (!MapGenerator.AllSquares.ContainsKey(targetSquareId)) return;
+
+        LastSquareId = CurrentSquareId;
+        CurrentSquareId = targetSquareId;
+        
+        Square nextSq = MapGenerator.AllSquares[targetSquareId];
+        Vector3 targetPos = nextSq.transform.position;
         Vector3 normal = nextSq.UpVector;
-        float heightOffset = 0.6f;
+        float heightOffset = 0.6f; 
         Vector3 goal = targetPos + normal * heightOffset;
 
-        transform.DOJump(goal, 0.5f, 1, 0.5f).SetEase(Ease.Linear)
-             .OnComplete(() => UpdateRotation(normal));
+        // ★修正: 1.0f ではなく originalScale に戻すことで巨大化を防ぐ
+        transform.DOScale(Vector3.zero, 0.3f).OnComplete(() => {
+            transform.position = goal;
+            UpdateRotation(normal);
+            transform.DOScale(originalScale, 0.3f).OnComplete(() => {
+                onComplete?.Invoke();
+            });
+        });
     }
 
     void UpdateRotation(Vector3 upVector)
@@ -2650,9 +3862,16 @@ public class PlayerController : MonoBehaviour
             Square currentSq = MapGenerator.AllSquares[CurrentSquareId];
             if (currentSq.CurrentItem != ItemType.None)
             {
-                Debug.Log($"<color=yellow>【ITEM】{PlayerId} は {currentSq.CurrentItem} を拾った！</color>");
-                if (currentSq.CurrentItem == ItemType.SpeedUp) DiceBonus += 1;
+                string itemTypeStr = currentSq.CurrentItem.ToString();
+                Debug.Log($"<color=yellow>【ITEM】{PlayerId} は {itemTypeStr} を拾った！</color>");
+                
                 OwnedItems.Add(currentSq.CurrentItem);
+                
+                // ★追加: Flutterへアイテム取得を通知する
+                // JSON: {"type": "ItemPickup", "playerId": "Oni1", "itemId": "SpeedUp"}
+                string json = $"{{\"type\":\"ItemPickup\", \"playerId\":\"{PlayerId}\", \"itemId\":\"{itemTypeStr}\"}}";
+                if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
+
                 currentSq.RemoveItem();
             }
         }
@@ -2697,6 +3916,7 @@ public class GameManager : MonoBehaviour
     public List<PlayerController> players = new List<PlayerController>();
     public int currentPlayerIndex = 0;
     public int turnCount = 1;
+    public int MaxTurnLimit = 10;
     
     private PlayerController CurrentPlayer => players[currentPlayerIndex];
     private List<string> activeMovableIds = new List<string>(); 
@@ -2716,7 +3936,9 @@ public class GameManager : MonoBehaviour
 
     void Start()
     {
-        if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter("UnityReady");
+        string readyJson = $"{{\"type\":\"UnityReady\"}}";
+        if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(readyJson);
+        
         DOVirtual.DelayedCall(0.1f, InitializeGame);
     }
 
@@ -2745,6 +3967,8 @@ public class GameManager : MonoBehaviour
         isMoving = false;
 
         UpdateGameInfoUI();
+        SendTurnChangeToFlutter(); 
+        
         if(isDebugMode) Debug.Log($"ゲーム開始: 第{turnCount}ターン / 手番: {CurrentPlayer.PlayerId}");
     }
 
@@ -2752,30 +3976,41 @@ public class GameManager : MonoBehaviour
     {
         if (isGameEnded || isEventPlaying) return; 
 
-        // デバッグ用（キーボードのRでダイス）
-        if (isDebugMode && Input.GetKeyDown(KeyCode.R) && isWaitingForDice)
+        if (isDebugMode && Input.GetKeyDown(KeyCode.R))
         {
-            int baseDice = Random.Range(1, 7); 
-            int finalDice = baseDice + CurrentPlayer.DiceBonus;
-            
-            CurrentPlayer.DiceBonus = 0; // 消費
-            UpdateGameInfoUI();
-            
-            OnDiceRolled(finalDice);
-            
-            // Flutter側にも結果通知（表示同期のため）
-            string json = $"{{\"type\":\"DiceRolled\", \"result\":\"{finalDice}\"}}";
-            if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
+            if (CurrentPlayer.RemainingSteps <= 0) ReceiveDiceResult(Random.Range(1, 7));
         }
 
         if (Input.GetMouseButtonDown(0)) HandleClickInteraction();
+    }
+
+    void ReceiveDiceResult(int baseResult)
+    {
+        Debug.Log($"ReceiveDiceResult called: base={baseResult}");
+        try
+        {
+            int bonus = CurrentPlayer.DiceBonus;
+            int finalResult = baseResult + bonus;
+
+            string json = $"{{\"type\":\"DiceCalculated\", \"base\":\"{baseResult}\", \"bonus\":\"{bonus}\", \"total\":\"{finalResult}\"}}";
+            if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
+
+            CurrentPlayer.DiceBonus = 0;
+            UpdateGameInfoUI();
+            OnDiceRolled(finalResult);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"ReceiveDiceResult Error: {e.Message}");
+        }
     }
 
     void OnDiceRolled(int result)
     {
         ShowDiceAnimation(result);
         CurrentPlayer.RemainingSteps = result;
-        isWaitingForDice = false;
+        CurrentPlayer.TotalStepsInTurn = result; 
+        isWaitingForDice = false; 
         ProcessNextStep();
     }
 
@@ -2797,6 +4032,12 @@ public class GameManager : MonoBehaviour
             Debug.Log("行き止まり！");
             CurrentPlayer.RemainingSteps = 0;
             CheckWinCondition();
+        }
+        else if (candidates.Count == 1)
+        {
+            isWaitingForDirection = true;
+            activeMovableIds = candidates;
+            MapGenerator.AllSquares[candidates[0]].SetHighlight(true);
         }
         else
         {
@@ -2846,20 +4087,94 @@ public class GameManager : MonoBehaviour
         }
     }
     
+    public void ActivateItem(string itemType)
+    {
+        if (isGameEnded || isEventPlaying) return;
+        Debug.Log($"アイテム使用: {itemType}");
+
+        switch(itemType)
+        {
+            case "Teleport":
+                var validCandidates = MapGenerator.AllSquares.Values
+                    .Where(sq => Vector3.Dot(sq.transform.up, Vector3.down) < 0.5f) 
+                    .Select(sq => sq.ID)
+                    .ToList();
+
+                if (validCandidates.Count > 0)
+                {
+                    string randomId = validCandidates[Random.Range(0, validCandidates.Count)];
+                    CurrentPlayer.ForceMoveTo(randomId, () => {
+                        CheckWinCondition();
+                    });
+                }
+                else
+                {
+                    Debug.LogWarning("ワープ可能なマスが見つかりませんでした");
+                }
+                break;
+
+            case "StageRotate":
+                StartCoroutine(RotateStageEvent(1.0f));
+                break;
+            
+            // ★修正: AddDiceValueを削除し、SpeedUpのみにする
+            case "SpeedUp":
+                if (!isWaitingForDice)
+                {
+                    Debug.LogWarning("ダイスを振った後なので加速アイテムは使えません");
+                    return; 
+                }
+                CurrentPlayer.DiceBonus += 2;
+                UpdateGameInfoUI();
+                break;
+        }
+    }
+
     void SpawnRandomItems(int count)
     {
         if (itemPrefab == null) return;
-        var allIds = MapGenerator.AllSquares.Keys.ToList();
-        int spawned = 0; int attempts = 0;
-        while (spawned < count && attempts < 100) {
-            attempts++;
-            string randomId = allIds[Random.Range(0, allIds.Count)];
-            Square sq = MapGenerator.AllSquares[randomId];
-            if (sq.CurrentItem == ItemType.None) {
-                sq.SpawnItem(ItemType.SpeedUp, itemPrefab);
-                spawned++;
+
+        var availableSquares = MapGenerator.AllSquares.Values
+            .Where(sq => sq.CurrentItem == ItemType.None)
+            .ToList();
+
+        if (count > availableSquares.Count) count = availableSquares.Count;
+
+        // ★修正: アイテム種別を3種類に限定
+        List<ItemType> allTypes = new List<ItemType> { 
+            ItemType.SpeedUp, 
+            ItemType.Teleport, 
+            ItemType.StageRotate 
+        };
+
+        int spawnedCount = 0;
+
+        while (spawnedCount < count && availableSquares.Count > 0)
+        {
+            ItemType nextType;
+
+            if (spawnedCount < allTypes.Count)
+            {
+                // フェーズA: 最初の3回で全種類を配置
+                nextType = allTypes[spawnedCount];
             }
+            else
+            {
+                // フェーズB: 残りはランダム
+                nextType = allTypes[Random.Range(0, allTypes.Count)];
+            }
+
+            int targetIndex = Random.Range(0, availableSquares.Count);
+            Square targetSq = availableSquares[targetIndex];
+
+            targetSq.SpawnItem(nextType, itemPrefab);
+
+            availableSquares.RemoveAt(targetIndex);
+            
+            spawnedCount++;
         }
+        
+        Debug.Log($"アイテム生成完了: {spawnedCount}個 (3種類配置保証済み)");
     }
 
     void SpawnPlayer(string id, string role, string startSquareId, Material mat)
@@ -2884,15 +4199,26 @@ public class GameManager : MonoBehaviour
         {
             string role = (CurrentPlayer.Role == "Oni") ? "鬼" : "逃走者";
             string steps = (CurrentPlayer.RemainingSteps > 0) ? $" 残り{CurrentPlayer.RemainingSteps}歩" : "";
-            gameInfoText.text = $"Turn {turnCount}\nPlayer: {CurrentPlayer.PlayerId} ({role}){steps}";
+            gameInfoText.text = $"Turn {turnCount}/{MaxTurnLimit}\nPlayer: {CurrentPlayer.PlayerId} ({role}){steps}";
+
+            string statusMsg = $"Turn {turnCount} / 手番: {CurrentPlayer.PlayerId}";
+            if (CurrentPlayer.RemainingSteps > 0) statusMsg += $" (残り{CurrentPlayer.RemainingSteps}歩)";
+            
+            string json = $"{{\"type\":\"StatusUpdate\", \"message\":\"{statusMsg}\"}}";
+            if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
         }
     }
 
-[Preserve] 
+    void SendTurnChangeToFlutter()
+    {
+        string json = $"{{\"type\":\"TurnChange\", \"playerId\":\"{CurrentPlayer.PlayerId}\"}}";
+        if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
+    }
+
+    [Preserve] 
     public void OnReceiveFlutterMessage(string jsonMessage)
     {
         Debug.Log($"<color=cyan>【Flutter受信】: {jsonMessage}</color>");
-
         try
         {
             var data = JsonConvert.DeserializeObject<Dictionary<string, string>>(jsonMessage);
@@ -2901,32 +4227,22 @@ public class GameManager : MonoBehaviour
             switch (data["type"])
             {
                 case "DiceRolled":
-                    if(data.ContainsKey("result"))
+                    if (isEventPlaying || CurrentPlayer.RemainingSteps > 0) 
                     {
-                        // 1. Flutterから基本の出目を取得
-                        int baseResult = int.Parse(data["result"]);
-                        
-                        // 2. ボーナスを加算
-                        int bonus = CurrentPlayer.DiceBonus;
-                        int finalResult = baseResult + bonus;
-
-                        Debug.Log($"基本: {baseResult} + ボーナス: {bonus} = 合計: {finalResult}");
-
-                        // ★追加: 計算結果をFlutterに通知する
-                        // JSONを手動で構築して送信
-                        string resultJson = $"{{\"type\":\"DiceCalculated\", \"base\":\"{baseResult}\", \"bonus\":\"{bonus}\", \"total\":\"{finalResult}\"}}";
-                        if (UnityMessageManager.Instance != null)
-                        {
-                            UnityMessageManager.Instance.SendMessageToFlutter(resultJson);
-                        }
-
-                        // 3. ボーナス消費＆UI更新
-                        CurrentPlayer.DiceBonus = 0;
-                        UpdateGameInfoUI();
-
-                        // 4. 移動開始
-                        OnDiceRolled(finalResult);
+                        Debug.LogWarning($"ダイス命令を無視: Event={isEventPlaying}, Steps={CurrentPlayer.RemainingSteps}");
+                        return;
                     }
+                    if (!isWaitingForDice && CurrentPlayer.RemainingSteps > 0)
+                    {
+                        Debug.LogWarning("ダイス不可状態");
+                        return;
+                    }
+
+                    if(data.ContainsKey("result")) ReceiveDiceResult(int.Parse(data["result"]));
+                    break;
+
+                case "UseItem":
+                    if(data.ContainsKey("itemId")) ActivateItem(data["itemId"]);
                     break;
             }
         }
@@ -2935,7 +4251,7 @@ public class GameManager : MonoBehaviour
             Debug.LogError($"メッセージ受信エラー: {e.Message}");
         }
     }
-    
+
     void ShowDiceAnimation(int result)
     {
         if (diceResultText != null)
@@ -2954,6 +4270,7 @@ public class GameManager : MonoBehaviour
         var runner = players.FirstOrDefault(p => p.Role == "Runner");
         var onis = players.Where(p => p.Role == "Oni").ToList();
         if (runner == null) return;
+        
         bool oniWin = false;
         foreach (var oni in onis)
         {
@@ -2963,8 +4280,20 @@ public class GameManager : MonoBehaviour
                 break;
             }
         }
-        if (oniWin) ShowResult("ONI TEAM WIN!");
-        else NextTurn();
+        
+        if (oniWin) 
+        {
+            ShowResult("ONI TEAM WIN!");
+            return;
+        }
+
+        if (turnCount >= MaxTurnLimit && currentPlayerIndex == players.Count - 1)
+        {
+            ShowResult("RUNNER WINS! (Time Up)");
+            return;
+        }
+
+        NextTurn();
     }
 
     void ShowResult(string message)
@@ -2977,40 +4306,186 @@ public class GameManager : MonoBehaviour
             resultText.transform.localScale = Vector3.zero;
             resultText.transform.DOScale(1.0f, 0.5f).SetEase(Ease.OutBack);
         }
+        string json = $"{{\"type\":\"GameEnd\", \"result\":\"{message}\"}}";
+        if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
         Debug.Log($"<color=red>【GAME SET】{message}</color>");
     }
 
     void NextTurn()
     {
         if (isGameEnded) return;
+        
         currentPlayerIndex = (currentPlayerIndex + 1) % players.Count;
         if (currentPlayerIndex == 0) turnCount++;
+        
+        CurrentPlayer.RemainingSteps = 0;
+        isWaitingForDice = true; 
+        isWaitingForDirection = false;
+        
         UpdateGameInfoUI();
+        SendTurnChangeToFlutter();
 
         if (currentPlayerIndex == 0 && turnCount > 1 && (turnCount - 1) % 4 == 0)
         {
+            isWaitingForDice = false; 
             StartCoroutine(RotateStageEvent());
         }
         else
         {
-            isWaitingForDice = true;
-            isWaitingForDirection = false;
             if(isDebugMode) Debug.Log($"第{turnCount}ターン / 次: {CurrentPlayer.PlayerId}");
         }
     }
 
-    IEnumerator RotateStageEvent()
+    IEnumerator RotateStageEvent(float duration = 2.0f)
     {
         isEventPlaying = true;
         foreach(var p in players) p.transform.SetParent(mapGenerator.MapPivot);
+        
         Vector3 axis = (Random.value > 0.5f) ? Vector3.right : Vector3.forward;
-        mapGenerator.RotateStage(axis, 90f, 2.0f);
-        yield return new WaitForSeconds(2.0f);
+        mapGenerator.RotateStage(axis, 90f, duration);
+        yield return new WaitForSeconds(duration);
+        
         foreach(var p in players) p.transform.SetParent(null);
+
+        CheckAndTeleportBottomPlayers();
+
         isEventPlaying = false;
-        isWaitingForDice = true;
+        isWaitingForDice = true; 
         isWaitingForDirection = false;
+        
+        SendTurnChangeToFlutter();
     }
+
+    void CheckAndTeleportBottomPlayers()
+    {
+        foreach(var p in players)
+        {
+            if(!MapGenerator.AllSquares.ContainsKey(p.CurrentSquareId)) continue;
+            
+            Square currentSq = MapGenerator.AllSquares[p.CurrentSquareId];
+            
+            if (Vector3.Dot(currentSq.transform.up, Vector3.down) > 0.9f)
+            {
+                Debug.Log($"{p.PlayerId} is on BOTTOM face! Teleporting...");
+                Square targetSq = FindTopSquareAt(currentSq.transform.position.x, currentSq.transform.position.z);
+                
+                if (targetSq != null)
+                {
+                    p.CurrentSquareId = targetSq.ID;
+                    Vector3 targetPos = targetSq.transform.position;
+                    Vector3 normal = targetSq.UpVector;
+                    float heightOffset = 0.6f;
+                    p.transform.position = targetPos + normal * heightOffset;
+                    
+                    Vector3 forward = p.transform.forward;
+                    if (Mathf.Abs(Vector3.Dot(forward, normal)) > 0.99f) forward = Vector3.forward;
+                    p.transform.rotation = Quaternion.LookRotation(forward, normal);
+                }
+            }
+        }
+    }
+
+    Square FindTopSquareAt(float worldX, float worldZ)
+    {
+        Square bestSq = null;
+        float maxY = -999f;
+        
+        foreach(var sq in MapGenerator.AllSquares.Values)
+        {
+            if (Mathf.Abs(sq.transform.position.x - worldX) < 0.2f &&
+                Mathf.Abs(sq.transform.position.z - worldZ) < 0.2f)
+            {
+                if (sq.transform.position.y > maxY)
+                {
+                    maxY = sq.transform.position.y;
+                    bestSq = sq;
+                }
+            }
+        }
+        return bestSq;
+    }
+}
+</file>
+
+<file path="lib/main.dart">
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+// 各画面のインポート
+import 'screens/title_screen.dart';
+import 'screens/lobby_screen.dart';
+import 'screens/waiting_room_screen.dart';
+import 'screens/game_screen.dart';
+
+// サービス・プロバイダーのインポート
+import 'services/socket_service.dart';
+import 'services/unity_bridge_service.dart';
+import 'providers/user_provider.dart';
+import 'providers/group_provider.dart';
+import 'providers/lobby_view_model.dart';
+
+// グローバルナビゲーションキー
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // 画面の向きを横向きに固定（ゲームのため）
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
+  ]);
+
+  final prefs = await SharedPreferences.getInstance();
+  final socketService = SocketService();
+  final unityBridge = UnityBridgeService();
+  
+  // Socket通信の初期化
+  socketService.init("ws://localhost:3000");
+
+  runApp(
+    MultiProvider(
+      providers: [
+        // インフラ層
+        Provider.value(value: socketService),
+        Provider.value(value: unityBridge),
+        
+        // 状態管理層
+        ChangeNotifierProvider(create: (_) => UserProvider(unityBridge, prefs)),
+        ChangeNotifierProvider(create: (_) => GroupProvider()),
+        ChangeNotifierProvider(create: (_) => LobbyViewModel()),
+      ],
+      child: const MyApp(),
+    ),
+  );
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      navigatorKey: navigatorKey,
+      debugShowCheckedModeBanner: false,
+      title: 'ブロックおに',
+      theme: ThemeData(
+        useMaterial3: true,
+        primarySwatch: Colors.cyan,
+        scaffoldBackgroundColor: Colors.white,
+      ),
+      // 初期画面
+      home: const TitleScreen(),
+      // 画面遷移定義
+      routes: {
+        '/lobby': (context) => const LobbyScreen(),
+        '/waiting': (context) => const WaitingRoomScreen(),
+        '/game': (context) => const GameScreen(),
+      },
+    );
+  }
 }
 </file>
 

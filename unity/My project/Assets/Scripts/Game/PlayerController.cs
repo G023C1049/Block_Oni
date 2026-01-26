@@ -2,11 +2,15 @@ using UnityEngine;
 using DG.Tweening; 
 using UnityEngine.UI;
 using System.Collections.Generic;
-using FlutterUnityIntegration; // 追加
+using FlutterUnityIntegration; 
 
 public class PlayerController : MonoBehaviour
 {
     public string PlayerId;
+    
+    // ★追加: GameManagerからアクセスするための名前変数
+    public string PlayerName;
+    
     public string Role;
     public string CurrentSquareId;
     public string LastSquareId;        
@@ -14,7 +18,7 @@ public class PlayerController : MonoBehaviour
     public int DiceBonus = 0;
     public int TotalStepsInTurn = 0;
 
-    // ★追加: 元のスケールを保持
+    // 元のスケールを保持
     private Vector3 originalScale;
 
     [Header("見た目・UI")]
@@ -24,8 +28,25 @@ public class PlayerController : MonoBehaviour
 
     void Start()
     {
-        // ★追加: 開始時のスケールを保存
+        // 開始時のスケールを保存
         originalScale = transform.localScale;
+        
+        // ★追加: 開始時に名前表示を更新
+        UpdateNameDisplay();
+    }
+
+    // ★追加: 外部(GameManager)から呼べる表示更新メソッド
+    public void UpdateNameDisplay()
+    {
+        if (nameText != null)
+        {
+            // PlayerNameが設定されていればそれを、なければIDを表示
+            string disp = !string.IsNullOrEmpty(PlayerName) ? PlayerName : PlayerId;
+            nameText.text = disp;
+            
+            // 役職に応じて色を変える
+            nameText.color = (Role == "Oni") ? Color.red : Color.cyan;
+        }
     }
 
     public void Setup(string id, string role, string startSquareId)
@@ -38,11 +59,8 @@ public class PlayerController : MonoBehaviour
         this.DiceBonus = 0;
         this.TotalStepsInTurn = 0;
 
-        if (nameText != null)
-        {
-            nameText.text = id;
-            nameText.color = (role == "Oni") ? Color.red : Color.cyan;
-        }
+        // ★修正: ここで直接textをいじらず、メソッド経由で更新する
+        UpdateNameDisplay();
     }
 
     public void SetMaterial(Material mat)
@@ -98,7 +116,7 @@ public class PlayerController : MonoBehaviour
         float heightOffset = 0.6f; 
         Vector3 goal = targetPos + normal * heightOffset;
 
-        // ★修正: 1.0f ではなく originalScale に戻すことで巨大化を防ぐ
+        // 1.0f ではなく originalScale に戻すことで巨大化を防ぐ
         transform.DOScale(Vector3.zero, 0.3f).OnComplete(() => {
             transform.position = goal;
             UpdateRotation(normal);
@@ -129,8 +147,7 @@ public class PlayerController : MonoBehaviour
                 
                 OwnedItems.Add(currentSq.CurrentItem);
                 
-                // ★追加: Flutterへアイテム取得を通知する
-                // JSON: {"type": "ItemPickup", "playerId": "Oni1", "itemId": "SpeedUp"}
+                // Flutterへアイテム取得を通知する
                 string json = $"{{\"type\":\"ItemPickup\", \"playerId\":\"{PlayerId}\", \"itemId\":\"{itemTypeStr}\"}}";
                 if (UnityMessageManager.Instance != null) UnityMessageManager.Instance.SendMessageToFlutter(json);
 

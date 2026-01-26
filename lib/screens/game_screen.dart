@@ -1,11 +1,15 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_unity_widget/flutter_unity_widget.dart';
-// プロジェクト構成に合わせてパスを調整してください
+import 'package:provider/provider.dart';
 import '../providers/game_rule_manager.dart';
+import '../providers/user_provider.dart';
+import '../models/game_types.dart'; // WinState用
+import '../models/player.dart';     // PlayerRole用
+import 'result_screen.dart';        // リザルト画面
 
 class GameScreen extends StatefulWidget {
-  const GameScreen({Key? key}) : super(key: key);
+  const GameScreen({super.key}); // warning修正
 
   @override
   State<GameScreen> createState() => _GameScreenState();
@@ -16,12 +20,15 @@ class _GameScreenState extends State<GameScreen> {
   final GameRuleManager _ruleManager = GameRuleManager();
 
   final List<String> _gameLogs = [
-    "システム: ゲームを開始します。",
-    "システム: 10ターン逃げ切れば逃走者の勝ちです。",
+    "システム: ゲーム画面をロード中...",
   ];
 
   final ScrollController _scrollController = ScrollController();
   bool _isDiceRolled = false;
+  bool _hasSentInitInfo = false;
+  
+  // 自分の役職 (player.dartの定義を使用)
+  PlayerRole _myRole = PlayerRole.Runner;
 
   @override
   void dispose() {
@@ -30,18 +37,101 @@ class _GameScreenState extends State<GameScreen> {
     super.dispose();
   }
 
-  void _onUnityCreated(controller) {
+  // warning修正: 型を明記
+  void _onUnityCreated(UnityWidgetController controller) {
     _unityWidgetController = controller;
+    
+    Future.delayed(const Duration(seconds: 3), () {
+      if (!_hasSentInitInfo && mounted) {
+        _sendGameInitInfo();
+      }
+    });
   }
 
-  void _onUnityMessage(message) {
+  void _sendGameInitInfo() {
+    if (_unityWidgetController == null) return;
+    
+    final userProvider = context.read<UserProvider>();
+    final userName = userProvider.username;
+
+    debugPrint("Sending StartGame to Unity with name: $userName");
+
+    final message = jsonEncode({
+      "type": "StartGame",
+      "userName": userName.isNotEmpty ? userName : "Guest"
+    });
+
+    _unityWidgetController?.postMessage(
+      'GameManager',
+      'OnReceiveFlutterMessage',
+      message,
+    );
+    
+    _hasSentInitInfo = true;
+    
+    if (!_gameLogs.any((log) => log.contains("ゲームに参加しました"))) {
+       _addLog("システム: $userName としてゲームに参加しました。");
+    }
+  }
+
+  // warning修正: 型を明記
+  void _onUnityMessage(dynamic message) {
     try {
       var data = jsonDecode(message.toString());
+
+      if (data['type'] == 'GameReady') {
+        _sendGameInitInfo();
+        return;
+      }
 
       if (data['type'] == 'StatusUpdate') {
         setState(() {
           _ruleManager.gameStatusMessage = data['message'];
         });
+        return;
+      }
+
+      // 役職割り当てメッセージの処理
+      if (data['type'] == 'RoleAssigned') {
+        final roleStr = data['role'];
+        setState(() {
+          if (roleStr == "Oni") {
+            _myRole = PlayerRole.Oni;
+            _addLog("あなたの役職は【鬼】です！逃走者を捕まえろ！");
+          } else {
+            _myRole = PlayerRole.Runner;
+            _addLog("あなたの役職は【逃走者】です！鬼から逃げ切れ！");
+          }
+        });
+        return;
+      }
+
+      // ゲーム終了メッセージの処理 -> リザルト画面へ
+      if (data['type'] == 'GameEnd') {
+        final resultStr = data['result']; // "OniWin" or "RunnerWin"
+        WinState winState;
+        
+        if (resultStr == "OniWin") {
+          winState = WinState.OniWin;
+        } else {
+          winState = WinState.RunnerWin;
+        }
+
+        // リザルト画面へ遷移
+        if (mounted) {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => ResultScreen(
+                winState: winState,
+                myRole: _myRole,
+                onReturnToLobby: () {
+                  // ロビー(前の画面)まで戻る
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                },
+              ),
+            ),
+          );
+        }
         return;
       }
 
@@ -113,6 +203,12 @@ class _GameScreenState extends State<GameScreen> {
         title: const Text('ゲームプレイ'),
         backgroundColor: const Color(0xFF252525),
         foregroundColor: Colors.white,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+             Navigator.of(context).pop();
+          },
+        ),
       ),
       body: Row(
         children: [
@@ -135,16 +231,19 @@ class _GameScreenState extends State<GameScreen> {
                 color: Color(0xFF252525),
                 border: Border(left: BorderSide(color: Colors.grey, width: 1)),
               ),
-              child: Column(
-                children: [
-                  _buildStatusHeader(),
-                  const Divider(color: Colors.grey, height: 1),
-                  Expanded(child: _buildLogView()),
-                  const Divider(color: Colors.grey, height: 1),
-                  _buildExpandableItemArea(),
-                  const Divider(color: Colors.grey, height: 1),
-                  _buildActionArea(),
-                ],
+              child: SafeArea(
+                bottom: true, 
+                child: Column(
+                  children: [
+                    _buildStatusHeader(),
+                    const Divider(color: Colors.grey, height: 1),
+                    Expanded(child: _buildLogView()),
+                    const Divider(color: Colors.grey, height: 1),
+                    _buildExpandableItemArea(),
+                    const Divider(color: Colors.grey, height: 1),
+                    _buildActionArea(),
+                  ],
+                ),
               ),
             ),
           ),
@@ -198,7 +297,7 @@ class _GameScreenState extends State<GameScreen> {
         initiallyExpanded: false,
         children: [
           Container(
-            height: 100, 
+            height: 90, 
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             color: Colors.black12,
             child: ListView(
@@ -226,7 +325,8 @@ class _GameScreenState extends State<GameScreen> {
       child: Container(
         width: 70, 
         decoration: BoxDecoration(
-          color: hasItem ? color.withOpacity(0.2) : Colors.black26,
+          // warning修正: withOpacity -> withValues
+          color: hasItem ? color.withValues(alpha: 0.2) : Colors.black26,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: hasItem ? color : Colors.grey),
         ),
@@ -247,24 +347,27 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   Widget _buildActionArea() {
-    return Container(
-      padding: const EdgeInsets.all(12.0),
-      child: SizedBox(
-        width: double.infinity,
-        height: 50,
-        child: ElevatedButton.icon(
-          onPressed: _isDiceRolled ? null : _handleDiceRoll,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.blueAccent,
-            foregroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-          ),
-          icon: const Icon(Icons.casino, size: 24),
-          label: const Flexible(
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text("ROLL DICE", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+        child: SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: ElevatedButton.icon(
+            onPressed: _isDiceRolled ? null : _handleDiceRoll,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blueAccent,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+            icon: const Icon(Icons.casino, size: 24),
+            label: const Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text("ROLL DICE", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ),
             ),
           ),
         ),

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-// GameScreenをインポートします
-import 'game_screen.dart';
+import 'package:provider/provider.dart';
+import '../providers/user_provider.dart';
+import '../overlays/global_overlay.dart'; // 設定画面表示用
+import '../screens/settings_overlay.dart'; // 設定画面の中身
 
 class TitleScreen extends StatefulWidget {
   const TitleScreen({super.key});
@@ -10,87 +12,97 @@ class TitleScreen extends StatefulWidget {
 }
 
 class _TitleScreenState extends State<TitleScreen> {
+  final TextEditingController _nameController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // 画面描画後に保存された名前をセット
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final userProvider = context.read<UserProvider>();
+      _nameController.text = userProvider.username;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
+      // Stackを使って右上に設定ボタンを配置できるようにする
       body: SafeArea(
-        child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // タイトルロゴやテキスト
-              const Icon(
-                Icons.extension,
-                size: 100,
-                color: Colors.cyan,
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Block Oni',
-                style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'ブロックおに',
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey,
-                ),
-              ),
-              const SizedBox(height: 60),
-
-              // ゲームスタートボタン
-              GestureDetector(
-                onTap: () {
-                  // スナックバーを表示
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('ゲームを開始します...')),
-                  );
-
-                  // ゲーム画面へ遷移
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (context) => const GameScreen(),
+        child: Stack(
+          children: [
+            // --- メインコンテンツ ---
+            Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // タイトルロゴ
+                    const Icon(Icons.directions_run, size: 100, color: Colors.cyan),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'ブロックおに',
+                      style: TextStyle(fontSize: 40, fontWeight: FontWeight.bold, color: Colors.cyan),
                     ),
-                  );
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
-                  decoration: BoxDecoration(
-                    color: Colors.orangeAccent.shade400,
-                    borderRadius: BorderRadius.circular(30),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 10,
-                        offset: Offset(0, 4),
-                      )
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(Icons.play_circle_fill, color: Colors.white, size: 30),
-                      SizedBox(width: 10),
-                      Text(
-                        "GAME START",
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
+                    const SizedBox(height: 40),
+
+                    // 名前入力
+                    SizedBox(
+                      width: 300,
+                      child: TextField(
+                        controller: _nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'プレイヤー名',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.person),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: 20),
+
+                    // スタートボタン
+                    SizedBox(
+                      width: 200,
+                      height: 50,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.orangeAccent,
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: () async {
+                          final name = _nameController.text;
+                          if (name.isEmpty) return;
+
+                          // 名前を保存
+                          final success = await context.read<UserProvider>().saveUsername(name);
+                          
+                          if (success && mounted) {
+                            Navigator.pushNamed(context, '/lobby');
+                          }
+                        },
+                        child: const Text('スタート', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-            ],
-          ),
+            ),
+
+            // --- ★追加: 設定ボタン（右上） ---
+            Positioned(
+              top: 10,
+              right: 10,
+              child: IconButton(
+                icon: const Icon(Icons.settings, size: 30, color: Colors.grey),
+                onPressed: () {
+                  // 設定オーバーレイを表示
+                  GlobalOverlay().show(child: const SettingsOverlay());
+                },
+              ),
+            ),
+          ],
         ),
       ),
     );
